@@ -1,0 +1,39 @@
+# Secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+credentials.json
+service-account*.json
+
+# n8n local
+.n8n/
+
+# Test artifacts
+test-results/
+*.log
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Build output / generated bundles
+dist/
+dist-ts/
+*.tsbuildinfo
+
+# Vercel
+.vercel/
+
+# Claude Code local settings
+.claude/settings.local.json

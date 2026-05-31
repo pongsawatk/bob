@@ -1,0 +1,17 @@
+{
+  "name": "bob-sidekick-scripts",
+  "version": "0.1.0",
+  "description": "BOB Sidekick — smoke test + utility scripts",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "smoke": "node run-smoke.mjs",
+    "smoke:local": "node run-smoke.mjs --endpoint http://localhost:5678/webhook/bob-chat",
+    "smoke:from-env": "node run-smoke.mjs",
+    "build:kb": "node build-kb-bundle.mjs",
+    "build:workflow:openrouter": "node build-openrouter-workflow.mjs"
+  }
+}
