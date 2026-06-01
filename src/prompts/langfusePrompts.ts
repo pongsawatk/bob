@@ -1,10 +1,9 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { env } from "../env.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const FALLBACK_DIR = join(root, "prompts", "fallback");
+// process.cwd() = project root both locally and on Vercel (/var/task)
+const FALLBACK_DIR = join(process.cwd(), "prompts", "fallback");
 
 // Cache fetched prompts in memory (module-level, survives warm Vercel invocations)
 const cache = new Map<string, string>();

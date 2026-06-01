@@ -3,10 +3,9 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "knowledge-base", "wiki");
+// process.cwd() = project root both locally and on Vercel (/var/task)
+const root = join(process.cwd(), "knowledge-base", "wiki");
 
 type Domain = "hr" | "product" | "process";
 
