@@ -1,0 +1,80 @@
+import crypto from "node:crypto";
+import { checkPrecache } from "./precache.js";
+import { routeMessage, type Category } from "./router.js";
+import { callDomainBot } from "./domainBot.js";
+import { startTrace, flushObs } from "../obs/langfuse.js";
+
+export interface PipelineInput {
+  message: string;
+  userId: string;
+  userName?: string;
+  department?: string;
+  channel?: string;
+}
+
+export interface PipelineOutput {
+  traceId: string;
+  category: Category;
+  answer: string;
+  latencyMs: number;
+  fromCache: boolean;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+  };
+}
+
+export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
+  const { message, userId, userName = "คุณ", department = "" } = input;
+  const traceId = crypto.randomUUID();
+  const t0 = Date.now();
+
+  const trace = startTrace(traceId, userId);
+
+  // ── Tier 0: Pre-cache ──────────────────────────────────────────
+  const precacheSpan = trace.span("precache");
+  const precacheHit = checkPrecache(message);
+  precacheSpan.end({ hit: !!precacheHit, category: precacheHit?.category });
+
+  if (precacheHit) {
+    await flushObs();
+    return {
+      traceId,
+      category: precacheHit.category,
+      answer: precacheHit.answer,
+      latencyMs: Date.now() - t0,
+      fromCache: true,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
+    };
+  }
+
+  // ── Tier 1: Router ─────────────────────────────────────────────
+  const routerSpan = trace.span("router");
+  const routed = await routeMessage(message);
+  routerSpan.end({ category: routed.category, confidence: routed.confidence });
+
+  // ── Tier 2-4: Domain Bot ───────────────────────────────────────
+  const botSpan = trace.span(`domain:${routed.category}`);
+  const botResult = await callDomainBot(routed.category, message, userName, department);
+  botSpan.end({
+    latencyMs: botResult.latencyMs,
+    inputTokens: botResult.usage.inputTokens,
+    cacheReadTokens: botResult.usage.cacheReadTokens,
+  });
+
+  await flushObs();
+
+  return {
+    traceId,
+    category: routed.category,
+    answer: botResult.text,
+    latencyMs: Date.now() - t0,
+    fromCache: false,
+    usage: {
+      inputTokens: botResult.usage.inputTokens,
+      outputTokens: botResult.usage.outputTokens,
+      cacheReadTokens: botResult.usage.cacheReadTokens,
+    },
+  };
+}
