@@ -4,7 +4,8 @@
   "outputDirectory": ".",
   "functions": {
     "api/**/*.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "knowledge-base/wiki/**,prompts/fallback/**"
     }
   }
 }
