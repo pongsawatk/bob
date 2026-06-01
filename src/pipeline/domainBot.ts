@@ -30,9 +30,7 @@ export async function callDomainBot(
   if (category === "HR") {
     const template = await getPrompt("hr");
     const kb = getHRBundle();
-    const systemPrompt = template
-      .replace("{{KB_BUNDLE}}", kb)
-      .replace("{{user_message}}", message);
+    const systemPrompt = template.replace("{{KB_BUNDLE}}", kb);
 
     const result = await callLLM({
       model: env.MODEL_HR,
@@ -50,7 +48,6 @@ export async function callDomainBot(
     const kb = getProductBundle();
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
-      .replace("{{user_message}}", message)
       .replace("{{user_name}}", userName)
       .replace("{{department}}", department);
 
@@ -67,7 +64,7 @@ export async function callDomainBot(
 
   // GENERAL
   const template = await getPrompt("general");
-  const systemPrompt = template.replace("{{user_message}}", message);
+  const systemPrompt = template.replace("{{user_message}}", "").trimEnd();
   const result = await callLLM({
     model: env.MODEL_GENERAL,
     systemPrompt,

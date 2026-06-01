@@ -30,6 +30,3 @@ PRODUCT KNOWLEDGE BASE:
 ═══════════════════════════════════════════════════
 {{KB_BUNDLE}}
 ═══════════════════════════════════════════════════
-
-USER QUESTION: {{user_message}}
-USER CONTEXT: ชื่อ {{user_name}} แผนก {{department}}
