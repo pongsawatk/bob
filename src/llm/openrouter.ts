@@ -36,20 +36,17 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
     cacheSystem = false,
   } = opts;
 
-  const isAnthropic = model.startsWith("anthropic/");
-
-  // Build system content — Anthropic supports array + cache_control, others use string
-  const systemContent: unknown = isAnthropic && cacheSystem
-    ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
-    : systemPrompt;
-
+  // OpenRouter /v1/chat/completions is OpenAI-compatible — system must be a string.
+  // cache_control array format is Anthropic-native only and silently dropped here.
+  // TODO Phase 2: switch to Anthropic native API for prompt caching when KB is large.
   const body = {
     model,
     max_tokens: maxTokens,
     temperature,
-    usage: { include: true },
-    system: systemContent,
-    messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...messages.map((m) => ({ role: m.role, content: m.content })),
+    ],
   };
 
   const t0 = Date.now();
