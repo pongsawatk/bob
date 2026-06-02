@@ -7,18 +7,21 @@ export interface LFSpan {
 export interface LFTrace {
   span: (name: string) => LFSpan;
   score: (name: string, value: number) => void;
+  update: (opts: { output: string; metadata?: Record<string, unknown> }) => void;
 }
 
 const noopSpan: LFSpan = { end: () => {} };
-const noopTrace: LFTrace = { span: () => noopSpan, score: () => {} };
+const noopTrace: LFTrace = { span: () => noopSpan, score: () => {}, update: () => {} };
 
 // Lazy Langfuse client (sync init using require — avoids top-level await)
 let _ready = false;
 let _lf: {
-  trace: (opts: { id: string; name: string; userId: string }) => {
+  trace: (opts: { id: string; name: string; userId: string; input?: string }) => {
     span: (opts: { name: string }) => { end: (opts: { output: unknown }) => void };
     score: (opts: { name: string; value: number }) => void;
+    update: (opts: { output?: string; metadata?: Record<string, unknown> }) => void;
   };
+  score: (opts: { traceId: string; name: string; value: number; dataType?: string }) => void;
   flushAsync: () => Promise<void>;
 } | null = null;
 
@@ -41,18 +44,26 @@ function initLF() {
   }
 }
 
-export function startTrace(traceId: string, userId: string): LFTrace {
+export function startTrace(traceId: string, userId: string, input?: string): LFTrace {
   initLF();
   if (!_lf) return noopTrace;
 
-  const t = _lf.trace({ id: traceId, name: "bob-chat", userId });
+  const t = _lf.trace({ id: traceId, name: "bob-chat", userId, input });
   return {
     span: (name: string) => {
       const s = t.span({ name });
       return { end: (output: unknown) => s.end({ output }) };
     },
     score: (name: string, value: number) => t.score({ name, value }),
+    update: (opts) => t.update(opts),
   };
+}
+
+export async function scoreTrace(traceId: string, name: string, value: number): Promise<void> {
+  initLF();
+  if (!_lf) return;
+  _lf.score({ traceId, name, value, dataType: "NUMERIC" });
+  await _lf.flushAsync();
 }
 
 export async function flushObs(): Promise<void> {

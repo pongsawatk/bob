@@ -5,6 +5,7 @@ import { BotFrameworkAdapter, TeamsInfo, type TurnContext, type Activity } from 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runPipeline, type PipelineOutput, type LLMMessage } from "../pipeline/index.js";
 import { refreshKB } from "../kb/index.js";
+import { scoreTrace } from "../obs/langfuse.js";
 import { env } from "../env.js";
 
 // Singleton adapter (re-used across warm Vercel invocations)
@@ -105,7 +106,7 @@ export async function handleTeamsRequest(
     if (activity.type === "message" && (activity.value as { action?: string })?.action === "feedback") {
       const val = activity.value as { action: string; value: number; traceId: string };
       console.log(`Feedback: traceId=${val.traceId} score=${val.value}`);
-      // TODO Phase 3: call langfuse.score(val.traceId, val.value)
+      await scoreTrace(val.traceId, "user-feedback", val.value);
       await ctx.sendActivity("ขอบคุณสำหรับ feedback ครับ!");
       return;
     }

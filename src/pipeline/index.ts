@@ -34,7 +34,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   const traceId = crypto.randomUUID();
   const t0 = Date.now();
 
-  const trace = startTrace(traceId, userId);
+  const trace = startTrace(traceId, userId, message);
 
   // ── Tier 0: Pre-cache ──────────────────────────────────────────
   const precacheSpan = trace.span("precache");
@@ -42,6 +42,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   precacheSpan.end({ hit: !!precacheHit, category: precacheHit?.category });
 
   if (precacheHit) {
+    trace.update({ output: precacheHit.answer, metadata: { category: precacheHit.category, fromCache: true } });
     await flushObs();
     return {
       traceId,
@@ -65,6 +66,17 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
     latencyMs: botResult.latencyMs,
     inputTokens: botResult.usage.inputTokens,
     cacheReadTokens: botResult.usage.cacheReadTokens,
+  });
+
+  trace.update({
+    output: botResult.text,
+    metadata: {
+      category: routed.category,
+      latencyMs: Date.now() - t0,
+      inputTokens: botResult.usage.inputTokens,
+      outputTokens: botResult.usage.outputTokens,
+      cacheReadTokens: botResult.usage.cacheReadTokens,
+    },
   });
 
   await flushObs();
