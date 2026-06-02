@@ -16,6 +16,8 @@ interface OutlineDoc {
   title: string;
   text: string;
   parentDocumentId: string | null;
+  /** Relative document path from Outline, e.g. "/doc/hr-leave-x5Rxe7yk2k". */
+  url?: string;
 }
 
 // Top-level parent title prefix → domain
@@ -60,6 +62,7 @@ export async function fetchOutlineBundles(): Promise<Bundles> {
   const ids = env.OUTLINE_COLLECTION_IDS.split(",").map((s) => s.trim()).filter(Boolean);
   if (!ids.length) throw new Error("OUTLINE_COLLECTION_IDS is empty — set it to the BOB KB collection id");
 
+  const base = env.OUTLINE_BASE_URL.replace(/\/$/, "");
   const all: OutlineDoc[] = [];
   for (const id of ids) all.push(...(await fetchCollectionDocs(id)));
 
@@ -90,7 +93,9 @@ export async function fetchOutlineBundles(): Promise<Bundles> {
     const dom = domainOf(topTitle(d));
     if (!dom) continue;
     const body = (d.text ?? "").trim();
-    parts[dom].push(body ? `## ${d.title}\n${body}` : `## ${d.title}`);
+    // Header carries the Outline source URL so the model can cite it (see prompt rule).
+    const header = d.url ? `## ${d.title}\nแหล่งอ้างอิง: ${base}${d.url}` : `## ${d.title}`;
+    parts[dom].push(body ? `${header}\n${body}` : header);
   }
 
   return {
