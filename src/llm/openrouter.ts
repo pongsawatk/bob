@@ -38,9 +38,16 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
     cacheSystem = false,
   } = opts;
 
-  // OpenRouter /v1/chat/completions is OpenAI-compatible — system must be a string.
-  // cache_control array format is Anthropic-native only and silently dropped here.
-  // TODO Phase 2: switch to Anthropic native API for prompt caching when KB is large.
+  // For Anthropic models, cache the (large, stable) system prompt by sending it as a
+  // content-block array with cache_control:ephemeral — OpenRouter passes this through
+  // to Anthropic. Cached input tokens are billed at 0.25x. For non-Anthropic models
+  // (Gemini) we send a plain string. ephemeral TTL is ~5 min, so the date in the
+  // prompt is stable within a cache window; HR (no per-user data) is shared across
+  // users, Product is shared across a user's multi-turn follow-ups.
+  const systemContent = cacheSystem
+    ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
+    : systemPrompt;
+
   const body = {
     model,
     max_tokens: maxTokens,
@@ -48,8 +55,8 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
     // Ask OpenRouter to report the actual cost (credits) it charged for this call.
     usage: { include: true },
     messages: [
-      { role: "system", content: systemPrompt },
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      { role: "system", content: systemContent as unknown },
+      ...messages.map((m) => ({ role: m.role, content: m.content as unknown })),
     ],
   };
 
@@ -75,7 +82,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
     usage?: {
       prompt_tokens?: number;
       completion_tokens?: number;
-      prompt_tokens_details?: { cached_tokens?: number };
+      prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
       cost?: number;
@@ -94,7 +101,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
       inputTokens: u.prompt_tokens ?? 0,
       outputTokens: u.completion_tokens ?? 0,
       cacheReadTokens: u.cache_read_input_tokens ?? details.cached_tokens ?? 0,
-      cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+      cacheWriteTokens: u.cache_creation_input_tokens ?? details.cache_write_tokens ?? 0,
     },
   };
 }
