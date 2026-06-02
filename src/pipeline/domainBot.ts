@@ -6,6 +6,8 @@ import type { Category } from "./router.js";
 
 export interface DomainResult extends LLMResult {
   category: Category;
+  /** OpenRouter model id that produced this answer ("" if no LLM was called). */
+  model: string;
 }
 
 const CLARIFY_RESPONSE =
@@ -28,8 +30,10 @@ export async function callDomainBot(
   if (category === "UNKNOWN") {
     return {
       category,
+      model: "",
       text: CLARIFY_RESPONSE,
       latencyMs: 0,
+      costUsd: 0,
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     };
   }
@@ -49,7 +53,7 @@ export async function callDomainBot(
       temperature: 0.3,
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
     });
-    return { ...result, category };
+    return { ...result, category, model: env.MODEL_HR };
   }
 
   if (category === "PRODUCT") {
@@ -69,7 +73,7 @@ export async function callDomainBot(
       temperature: 0.5,
       cacheSystem: env.MODEL_PRODUCT.startsWith("anthropic/"),
     });
-    return { ...result, category };
+    return { ...result, category, model: env.MODEL_PRODUCT };
   }
 
   // GENERAL
@@ -82,5 +86,5 @@ export async function callDomainBot(
     maxTokens: 800,
     temperature: 0.5,
   });
-  return { ...result, category };
+  return { ...result, category, model: env.MODEL_GENERAL };
 }

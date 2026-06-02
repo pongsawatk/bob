@@ -23,6 +23,8 @@ export interface LLMResult {
     cacheReadTokens: number;
     cacheWriteTokens: number;
   };
+  /** Actual cost in USD as billed by OpenRouter (0 if not reported). */
+  costUsd: number;
   latencyMs: number;
 }
 
@@ -43,6 +45,8 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
     model,
     max_tokens: maxTokens,
     temperature,
+    // Ask OpenRouter to report the actual cost (credits) it charged for this call.
+    usage: { include: true },
     messages: [
       { role: "system", content: systemPrompt },
       ...messages.map((m) => ({ role: m.role, content: m.content })),
@@ -74,6 +78,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
       prompt_tokens_details?: { cached_tokens?: number };
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
+      cost?: number;
     };
   };
 
@@ -84,6 +89,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
   return {
     text,
     latencyMs,
+    costUsd: u.cost ?? 0,
     usage: {
       inputTokens: u.prompt_tokens ?? 0,
       outputTokens: u.completion_tokens ?? 0,

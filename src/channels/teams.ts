@@ -16,6 +16,23 @@ let _adapter: BotFrameworkAdapter | null = null;
 const MAX_HISTORY_MESSAGES = 14; // 7 turns
 const conversationHistory = new Map<string, LLMMessage[]>();
 
+// Cache aadObjectId → email so we only call TeamsInfo.getMember once per user per warm instance.
+const emailCache = new Map<string, string>();
+
+async function resolveEmail(ctx: TurnContext, aadId: string): Promise<string> {
+  const cached = emailCache.get(aadId);
+  if (cached !== undefined) return cached;
+  let email = "";
+  try {
+    const member = await TeamsInfo.getMember(ctx, ctx.activity.from.id);
+    email = (member.email ?? member.userPrincipalName ?? "").toLowerCase();
+  } catch (err) {
+    console.error("resolveEmail: getMember failed:", err);
+  }
+  emailCache.set(aadId, email);
+  return email;
+}
+
 function getAdapter(): BotFrameworkAdapter {
   if (!_adapter) {
     _adapter = new BotFrameworkAdapter({
@@ -122,9 +139,10 @@ export async function handleTeamsRequest(
       return;
     }
 
-    // Extract identity from Azure AD payload
-    const userId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
+    // Extract identity from Azure AD payload. Prefer email as the Langfuse user id.
+    const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
     const userName = activity.from.name ?? "คุณ";
+    const userId = (await resolveEmail(ctx, aadId)) || aadId;
 
     const convId = activity.conversation?.id ?? userId;
     const history = conversationHistory.get(convId) ?? [];

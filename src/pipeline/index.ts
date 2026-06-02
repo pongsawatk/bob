@@ -60,12 +60,19 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   routerSpan.end({ category: routed.category, confidence: routed.confidence });
 
   // ── Tier 2-4: Domain Bot ───────────────────────────────────────
-  const botSpan = trace.span(`domain:${routed.category}`);
   const botResult = await callDomainBot(routed.category, message, userName, department, history);
-  botSpan.end({
+  trace.generation({
+    name: `domain:${routed.category}`,
+    model: botResult.model,
+    input: message,
+    output: botResult.text,
     latencyMs: botResult.latencyMs,
-    inputTokens: botResult.usage.inputTokens,
-    cacheReadTokens: botResult.usage.cacheReadTokens,
+    usage: {
+      input: botResult.usage.inputTokens,
+      output: botResult.usage.outputTokens,
+      total: botResult.usage.inputTokens + botResult.usage.outputTokens,
+      totalCost: botResult.costUsd,
+    },
   });
 
   trace.update({

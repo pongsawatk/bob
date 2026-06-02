@@ -5,13 +5,24 @@ export interface LFSpan {
   end: (output: unknown) => void;
 }
 
+export interface LFGeneration {
+  name: string;
+  model: string;
+  input: unknown;
+  output: unknown;
+  latencyMs: number;
+  /** Token counts + actual cost (USD) — drives Langfuse's Model/Cost columns. */
+  usage: { input: number; output: number; total: number; totalCost: number };
+}
+
 export interface LFTrace {
   span: (name: string) => LFSpan;
+  generation: (gen: LFGeneration) => void;
   update: (opts: { output: string; metadata?: Record<string, unknown> }) => void;
 }
 
 const noopSpan: LFSpan = { end: () => {} };
-const noopTrace: LFTrace = { span: () => noopSpan, update: () => {} };
+const noopTrace: LFTrace = { span: () => noopSpan, generation: () => {}, update: () => {} };
 
 // One client per warm instance. We deliberately do NOT set flushAt:1 / auto-flush:
 // on serverless that would fire background (un-awaited) flushes which get killed
@@ -37,6 +48,24 @@ export function startTrace(traceId: string, userId: string, input?: string): LFT
     span: (name) => {
       const s = t.span({ name });
       return { end: (output) => s.end({ output }) };
+    },
+    generation: ({ name, model, input, output, latencyMs, usage }) => {
+      const startTime = new Date(Date.now() - latencyMs);
+      const g = t.generation({
+        name,
+        model,
+        input,
+        output,
+        startTime,
+        usage: {
+          input: usage.input,
+          output: usage.output,
+          total: usage.total,
+          totalCost: usage.totalCost,
+          unit: "TOKENS",
+        },
+      });
+      g.end(); // end() stamps endTime = now automatically
     },
     update: (opts) => {
       t.update(opts);
