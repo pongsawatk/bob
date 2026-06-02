@@ -5,18 +5,25 @@ import { env } from "../env.js";
 // process.cwd() = project root both locally and on Vercel (/var/task)
 const FALLBACK_DIR = join(process.cwd(), "prompts", "fallback");
 
-// Cache fetched prompts in memory (module-level, survives warm Vercel invocations)
-const cache = new Map<string, string>();
+export interface LoadedPrompt {
+  text: string;
+  /** Prompt version for Langfuse's Version column: "v3" (Langfuse) or "fallback" (local file). */
+  version: string;
+}
 
-function loadFallback(name: string): string {
+// Cache fetched prompts in memory (module-level, survives warm Vercel invocations)
+const cache = new Map<string, LoadedPrompt>();
+
+function loadFallback(name: string): LoadedPrompt {
   const cached = cache.get(`local:${name}`);
   if (cached) return cached;
   const text = readFileSync(join(FALLBACK_DIR, `${name}.txt`), "utf8");
-  cache.set(`local:${name}`, text);
-  return text;
+  const prompt: LoadedPrompt = { text, version: "fallback" };
+  cache.set(`local:${name}`, prompt);
+  return prompt;
 }
 
-async function fetchFromLangfuse(name: string): Promise<string | null> {
+async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
   if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return null;
   const cached = cache.get(`lf:${name}`);
   if (cached) return cached;
@@ -30,12 +37,14 @@ async function fetchFromLangfuse(name: string): Promise<string | null> {
       { headers: { Authorization: `Basic ${auth}` } }
     );
     if (!res.ok) return null;
-    const j = (await res.json()) as { prompt?: string | Array<{ text?: string }> };
+    const j = (await res.json()) as { prompt?: string | Array<{ text?: string }>; version?: number };
     let text: string | null = null;
     if (typeof j.prompt === "string") text = j.prompt;
     else if (Array.isArray(j.prompt)) text = j.prompt.map((b) => b.text ?? "").join("");
-    if (text) cache.set(`lf:${name}`, text);
-    return text;
+    if (!text) return null;
+    const prompt: LoadedPrompt = { text, version: j.version != null ? `v${j.version}` : "production" };
+    cache.set(`lf:${name}`, prompt);
+    return prompt;
   } catch {
     return null;
   }
@@ -45,7 +54,7 @@ async function fetchFromLangfuse(name: string): Promise<string | null> {
  * Get a prompt by name. Tries Langfuse (label=production) first,
  * falls back to prompts/fallback/<name>.txt.
  */
-export async function getPrompt(name: string): Promise<string> {
+export async function getPrompt(name: string): Promise<LoadedPrompt> {
   const remote = await fetchFromLangfuse(name);
   if (remote) return remote;
   return loadFallback(name);

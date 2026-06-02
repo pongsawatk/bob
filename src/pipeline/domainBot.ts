@@ -8,6 +8,8 @@ export interface DomainResult extends LLMResult {
   category: Category;
   /** OpenRouter model id that produced this answer ("" if no LLM was called). */
   model: string;
+  /** Version of the prompt used ("v3"/"fallback", or "" if no LLM was called). */
+  promptVersion: string;
 }
 
 const CLARIFY_RESPONSE =
@@ -31,6 +33,7 @@ export async function callDomainBot(
     return {
       category,
       model: "",
+      promptVersion: "",
       text: CLARIFY_RESPONSE,
       latencyMs: 0,
       costUsd: 0,
@@ -39,7 +42,7 @@ export async function callDomainBot(
   }
 
   if (category === "HR") {
-    const template = await getPrompt("hr");
+    const { text: template, version: promptVersion } = await getPrompt("hr");
     const kb = await getHRBundle();
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
@@ -53,11 +56,11 @@ export async function callDomainBot(
       temperature: 0.3,
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
     });
-    return { ...result, category, model: env.MODEL_HR };
+    return { ...result, category, model: env.MODEL_HR, promptVersion };
   }
 
   if (category === "PRODUCT") {
-    const template = await getPrompt("product");
+    const { text: template, version: promptVersion } = await getPrompt("product");
     const kb = await getProductBundle();
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
@@ -73,11 +76,11 @@ export async function callDomainBot(
       temperature: 0.5,
       cacheSystem: env.MODEL_PRODUCT.startsWith("anthropic/"),
     });
-    return { ...result, category, model: env.MODEL_PRODUCT };
+    return { ...result, category, model: env.MODEL_PRODUCT, promptVersion };
   }
 
   // GENERAL
-  const template = await getPrompt("general");
+  const { text: template, version: promptVersion } = await getPrompt("general");
   const systemPrompt = template.replace("{{user_message}}", "").trimEnd();
   const result = await callLLM({
     model: env.MODEL_GENERAL,
@@ -86,5 +89,5 @@ export async function callDomainBot(
     maxTokens: 800,
     temperature: 0.5,
   });
-  return { ...result, category, model: env.MODEL_GENERAL };
+  return { ...result, category, model: env.MODEL_GENERAL, promptVersion };
 }

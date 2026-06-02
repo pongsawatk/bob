@@ -12,7 +12,7 @@ export interface RouterResult {
 }
 
 export async function routeMessage(message: string, history: LLMMessage[] = []): Promise<RouterResult> {
-  const promptTemplate = await getPrompt("router");
+  const { text: promptTemplate } = await getPrompt("router");
   const systemPrompt = promptTemplate.replace("{{user_message}}", message);
 
   // Include recent conversation context so router understands follow-up questions

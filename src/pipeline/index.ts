@@ -64,6 +64,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   trace.generation({
     name: `domain:${routed.category}`,
     model: botResult.model,
+    version: botResult.promptVersion,
     input: message,
     output: botResult.text,
     latencyMs: botResult.latencyMs,

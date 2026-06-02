@@ -8,6 +8,8 @@ export interface LFSpan {
 export interface LFGeneration {
   name: string;
   model: string;
+  /** Prompt version — shows in Langfuse's Version column. */
+  version: string;
   input: unknown;
   output: unknown;
   latencyMs: number;
@@ -49,11 +51,12 @@ export function startTrace(traceId: string, userId: string, input?: string): LFT
       const s = t.span({ name });
       return { end: (output) => s.end({ output }) };
     },
-    generation: ({ name, model, input, output, latencyMs, usage }) => {
+    generation: ({ name, model, version, input, output, latencyMs, usage }) => {
       const startTime = new Date(Date.now() - latencyMs);
       const g = t.generation({
         name,
         model,
+        version,
         input,
         output,
         startTime,
