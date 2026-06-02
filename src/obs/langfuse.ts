@@ -25,6 +25,8 @@ const _lf: Langfuse | null =
       })
     : null;
 
+console.log("[langfuse] init:", _lf ? `connected (host=${env.LANGFUSE_HOST})` : "disabled — LANGFUSE keys missing");
+
 export function startTrace(traceId: string, userId: string, input?: string): LFTrace {
   if (!_lf) return noopTrace;
 
@@ -46,5 +48,11 @@ export async function scoreTrace(traceId: string, name: string, value: number): 
 }
 
 export async function flushObs(): Promise<void> {
-  if (_lf) await _lf.flushAsync();
+  if (!_lf) return;
+  try {
+    await _lf.flushAsync();
+    console.log("[langfuse] flush OK");
+  } catch (err) {
+    console.error("[langfuse] flush ERROR:", err);
+  }
 }
