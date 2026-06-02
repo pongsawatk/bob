@@ -11,7 +11,7 @@ let _adapter: BotFrameworkAdapter | null = null;
 
 // In-memory conversation history — persists across warm invocations, resets on cold start.
 // Key = Teams conversation ID, Value = last N message pairs.
-const MAX_HISTORY_MESSAGES = 6; // 3 turns
+const MAX_HISTORY_MESSAGES = 14; // 7 turns
 const conversationHistory = new Map<string, LLMMessage[]>();
 
 function getAdapter(): BotFrameworkAdapter {
