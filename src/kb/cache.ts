@@ -2,8 +2,7 @@
 // Vercel is stateless — Redis lets every serverless invocation read the same
 // pre-assembled bundle without re-hitting Outline on each request.
 
-import { Redis } from "@upstash/redis";
-import { env } from "../env.js";
+import { getRedis } from "../store/redis.js";
 import type { Bundles } from "./outline.js";
 
 const BUNDLES_KEY = "bob:kb:bundles";
@@ -14,18 +13,7 @@ export interface KbMeta {
   counts: { hr: number; process: number; product: number };
 }
 
-let _redis: Redis | null = null;
-
-function redis(): Redis | null {
-  if (!env.UPSTASH_REDIS_REST_URL || !env.UPSTASH_REDIS_REST_TOKEN) return null;
-  if (!_redis) {
-    _redis = new Redis({
-      url: env.UPSTASH_REDIS_REST_URL,
-      token: env.UPSTASH_REDIS_REST_TOKEN,
-    });
-  }
-  return _redis;
-}
+const redis = getRedis;
 
 export function redisConfigured(): boolean {
   return redis() !== null;
