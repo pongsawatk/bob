@@ -1,6 +1,6 @@
 import { callLLM, type LLMResult, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
-import { getHRBundle, getProductBundle } from "../kb/inline.js";
+import { getHRBundle, getProductBundle } from "../kb/index.js";
 import { env } from "../env.js";
 import type { Category } from "./router.js";
 
@@ -36,7 +36,7 @@ export async function callDomainBot(
 
   if (category === "HR") {
     const template = await getPrompt("hr");
-    const kb = getHRBundle();
+    const kb = await getHRBundle();
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
       .replace("{{CURRENT_DATE}}", currentDateTH());
@@ -54,7 +54,7 @@ export async function callDomainBot(
 
   if (category === "PRODUCT") {
     const template = await getPrompt("product");
-    const kb = getProductBundle();
+    const kb = await getProductBundle();
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
       .replace("{{user_name}}", userName)

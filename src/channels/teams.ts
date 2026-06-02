@@ -1,9 +1,10 @@
 // MS Teams channel adapter — wraps Bot Framework request/response.
 // AZURE_BOT_ID / AZURE_BOT_SECRET must be set for authentication to work.
 
-import { BotFrameworkAdapter, type TurnContext, type Activity } from "botbuilder";
+import { BotFrameworkAdapter, TeamsInfo, type TurnContext, type Activity } from "botbuilder";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runPipeline, type PipelineOutput, type LLMMessage } from "../pipeline/index.js";
+import { refreshKB } from "../kb/index.js";
 import { env } from "../env.js";
 
 // Singleton adapter (re-used across warm Vercel invocations)
@@ -56,6 +57,41 @@ function buildAdaptiveCard(output: PipelineOutput): Partial<Activity> {
   };
 }
 
+function adminEmails(): string[] {
+  return env.KB_ADMIN_EMAILS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+async function handleRefreshCommand(ctx: TurnContext): Promise<void> {
+  // Resolve the sender's real email — activity.from only carries an AAD object id.
+  let email = "";
+  try {
+    const member = await TeamsInfo.getMember(ctx, ctx.activity.from.id);
+    email = (member.email ?? member.userPrincipalName ?? "").toLowerCase();
+  } catch (err) {
+    console.error("Teams /refresh: getMember failed:", err);
+  }
+
+  if (!email || !adminEmails().includes(email)) {
+    console.warn(`Teams /refresh denied for "${email || "unknown"}"`);
+    await ctx.sendActivity("ขออภัยครับ คำสั่ง /refresh ใช้ได้เฉพาะผู้ดูแลระบบเท่านั้นครับ");
+    return;
+  }
+
+  await ctx.sendActivity("กำลังอัปเดตความรู้จาก Outline... ⏳");
+  try {
+    const r = await refreshKB();
+    await ctx.sendActivity(
+      `อัปเดตความรู้เรียบร้อยครับ ✅\n` +
+        `• HR: ${r.counts.hr} เอกสาร\n` +
+        `• Process: ${r.counts.process} เอกสาร\n` +
+        `• Product: ${r.counts.product} เอกสาร`
+    );
+  } catch (err) {
+    console.error("Teams /refresh: refreshKB failed:", err);
+    await ctx.sendActivity("ขออภัยครับ อัปเดตความรู้ไม่สำเร็จ กรุณาลองใหม่อีกครั้งครับ");
+  }
+}
+
 export async function handleTeamsRequest(
   req: IncomingMessage,
   res: ServerResponse
@@ -78,6 +114,12 @@ export async function handleTeamsRequest(
 
     const message = (activity.text ?? "").trim();
     if (!message) return;
+
+    // Admin command: pull latest KB from Outline into Redis
+    if (/^\/refresh\b/i.test(message)) {
+      await handleRefreshCommand(ctx);
+      return;
+    }
 
     // Extract identity from Azure AD payload
     const userId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";

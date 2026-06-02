@@ -33,6 +33,9 @@ export const env = {
   OUTLINE_API_TOKEN:      opt("OUTLINE_API_TOKEN"),
   OUTLINE_COLLECTION_IDS: opt("OUTLINE_COLLECTION_IDS"),
 
+  // KB admin — emails allowed to run /refresh in Teams (comma-separated)
+  KB_ADMIN_EMAILS: opt("KB_ADMIN_EMAILS"),
+
   // Azure Bot
   AZURE_BOT_ID:     opt("AZURE_BOT_ID"),
   AZURE_BOT_SECRET: opt("AZURE_BOT_SECRET"),
