@@ -5,8 +5,8 @@
 import { getRedis } from "../store/redis.js";
 import type { LLMMessage } from "../llm/openrouter.js";
 
-const MAX_HISTORY_MESSAGES = 14; // 7 turns
-const TTL_SECONDS = 60 * 60; // conversation window: 1 hour of inactivity
+const MAX_HISTORY_MESSAGES = 14; // 7 turns sent to the LLM
+const TTL_SECONDS = 60 * 60 * 24; // conversation window: 24h of inactivity (sliding)
 
 // Fallback for local dev / when Redis isn't configured.
 const memFallback = new Map<string, LLMMessage[]>();
@@ -48,5 +48,17 @@ export async function appendHistory(
   } catch (err) {
     console.error("appendHistory: redis write failed:", err);
     memFallback.set(convId, updated);
+  }
+}
+
+/** Forget a conversation (the user explicitly reset it). */
+export async function clearHistory(convId: string): Promise<void> {
+  memFallback.delete(convId);
+  const r = getRedis();
+  if (!r) return;
+  try {
+    await r.del(key(convId));
+  } catch (err) {
+    console.error("clearHistory: redis delete failed:", err);
   }
 }

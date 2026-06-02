@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { runPipeline, type PipelineOutput } from "../pipeline/index.js";
 import { refreshKB } from "../kb/index.js";
 import { scoreTrace } from "../obs/langfuse.js";
-import { getHistory, appendHistory } from "./history.js";
+import { getHistory, appendHistory, clearHistory } from "./history.js";
 import { env } from "../env.js";
 
 // Singleton adapter (re-used across warm Vercel invocations)
@@ -75,6 +75,13 @@ function adminEmails(): string[] {
   return env.KB_ADMIN_EMAILS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 }
 
+// Reset-memory command: /clear, /reset, or a Thai phrase used on its own.
+const CLEAR_PHRASES_TH = ["เริ่มใหม่", "ล้างความจำ", "ล้างประวัติ", "เคลียร์", "ลืมไปได้เลย"];
+function isClearCommand(message: string): boolean {
+  if (/^\/(clear|reset)\b/i.test(message)) return true;
+  return CLEAR_PHRASES_TH.includes(message.trim());
+}
+
 async function handleRefreshCommand(ctx: TurnContext): Promise<void> {
   // Resolve the sender's real email — activity.from only carries an AAD object id.
   let email = "";
@@ -132,6 +139,14 @@ export async function handleTeamsRequest(
     // Admin command: pull latest KB from Outline into Redis
     if (/^\/refresh\b/i.test(message)) {
       await handleRefreshCommand(ctx);
+      return;
+    }
+
+    // Self-service: anyone can reset their own conversation memory.
+    if (isClearCommand(message)) {
+      const convId = activity.conversation?.id ?? activity.from.aadObjectId ?? activity.from.id ?? "unknown";
+      await clearHistory(convId);
+      await ctx.sendActivity("ล้างความจำเรียบร้อยครับ เริ่มต้นบทสนทนาใหม่ได้เลย 🧹");
       return;
     }
 
