@@ -10,6 +10,7 @@
   "scripts": {
     "check": "node scripts/check-connectivity.mjs",
     "refresh-kb": "tsx scripts/refresh-kb.ts",
+    "seed-prompts": "node scripts/seed-prompts.mjs",
     "verify:cache": "node scripts/verify-cache-control.mjs",
     "smoke": "node scripts/run-smoke.mjs",
     "dev": "tsx watch src/index.ts",

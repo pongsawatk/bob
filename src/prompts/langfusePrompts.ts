@@ -11,22 +11,28 @@ export interface LoadedPrompt {
   version: string;
 }
 
-// Cache fetched prompts in memory (module-level, survives warm Vercel invocations)
-const cache = new Map<string, LoadedPrompt>();
+// Local fallback files never change at runtime — cache them permanently.
+const localCache = new Map<string, LoadedPrompt>();
+
+// Langfuse prompts can be edited by non-devs at any time. Cache them only
+// briefly so an edit (new production version) propagates to every warm
+// instance within ~60s without a redeploy.
+const LF_TTL_MS = 60_000;
+const lfCache = new Map<string, { prompt: LoadedPrompt; at: number }>();
 
 function loadFallback(name: string): LoadedPrompt {
-  const cached = cache.get(`local:${name}`);
+  const cached = localCache.get(name);
   if (cached) return cached;
   const text = readFileSync(join(FALLBACK_DIR, `${name}.txt`), "utf8");
   const prompt: LoadedPrompt = { text, version: "fallback" };
-  cache.set(`local:${name}`, prompt);
+  localCache.set(name, prompt);
   return prompt;
 }
 
 async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
   if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return null;
-  const cached = cache.get(`lf:${name}`);
-  if (cached) return cached;
+  const cached = lfCache.get(name);
+  if (cached && Date.now() - cached.at < LF_TTL_MS) return cached.prompt;
 
   try {
     const auth = Buffer.from(
@@ -43,7 +49,7 @@ async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
     else if (Array.isArray(j.prompt)) text = j.prompt.map((b) => b.text ?? "").join("");
     if (!text) return null;
     const prompt: LoadedPrompt = { text, version: j.version != null ? `v${j.version}` : "production" };
-    cache.set(`lf:${name}`, prompt);
+    lfCache.set(name, { prompt, at: Date.now() });
     return prompt;
   } catch {
     return null;
@@ -62,5 +68,6 @@ export async function getPrompt(name: string): Promise<LoadedPrompt> {
 
 /** Clear the in-memory cache (useful in tests or after prompt updates) */
 export function clearPromptCache(): void {
-  cache.clear();
+  localCache.clear();
+  lfCache.clear();
 }
