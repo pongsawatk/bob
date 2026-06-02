@@ -7,6 +7,8 @@ import { runPipeline, type PipelineOutput } from "../pipeline/index.js";
 import { refreshKB } from "../kb/index.js";
 import { scoreTrace } from "../obs/langfuse.js";
 import { getHistory, appendHistory, clearHistory } from "./history.js";
+import { checkRateLimit } from "./ratelimit.js";
+import { alertError } from "../obs/alert.js";
 import { env } from "../env.js";
 
 // Singleton adapter (re-used across warm Vercel invocations)
@@ -40,6 +42,7 @@ function getAdapter(): BotFrameworkAdapter {
     });
     _adapter.onTurnError = async (ctx, err) => {
       console.error("Teams adapter error:", err);
+      await alertError("Teams turn", err);
       await ctx.sendActivity("ขออภัยครับ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้งครับ");
     };
   }
@@ -130,6 +133,7 @@ async function handleRefreshCommand(ctx: TurnContext): Promise<void> {
     );
   } catch (err) {
     console.error("Teams /refresh: refreshKB failed:", err);
+    await alertError("/refresh", err);
     await ctx.sendActivity("ขออภัยครับ อัปเดตความรู้ไม่สำเร็จ กรุณาลองใหม่อีกครั้งครับ");
   }
 }
@@ -171,12 +175,20 @@ export async function handleTeamsRequest(
       return;
     }
 
+    // Extract identity from Azure AD payload. Prefer email as the Langfuse user id.
+    const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
+
+    // Rate limit per user before doing any expensive work.
+    const rl = await checkRateLimit(aadId);
+    if (!rl.allowed) {
+      await ctx.sendActivity("ขออภัยครับ คุณส่งข้อความถี่เกินไป รบกวนรอสักครู่แล้วลองใหม่นะครับ 🙏");
+      return;
+    }
+
     // Real question — keep a typing indicator alive while we resolve identity
     // and run the (sometimes 10–20s) LLM pipeline.
     const stopTyping = startTyping(ctx);
     try {
-      // Extract identity from Azure AD payload. Prefer email as the Langfuse user id.
-      const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
       const userName = activity.from.name ?? "คุณ";
       const userId = (await resolveEmail(ctx, aadId)) || aadId;
 

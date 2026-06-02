@@ -36,6 +36,9 @@ export const env = {
   // KB admin — emails allowed to run /refresh in Teams (comma-separated)
   KB_ADMIN_EMAILS: opt("KB_ADMIN_EMAILS"),
 
+  // Teams Incoming Webhook URL for error alerts (optional — no alerts if unset)
+  ALERT_WEBHOOK_URL: opt("ALERT_WEBHOOK_URL"),
+
   // Azure Bot
   AZURE_BOT_ID:     opt("AZURE_BOT_ID"),
   AZURE_BOT_SECRET: opt("AZURE_BOT_SECRET"),
