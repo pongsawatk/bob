@@ -1,4 +1,4 @@
-import { callLLM } from "../llm/openrouter.js";
+import { callLLM, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { env } from "../env.js";
 
@@ -11,12 +11,16 @@ export interface RouterResult {
   rawJson: string;
 }
 
-export async function routeMessage(message: string): Promise<RouterResult> {
+export async function routeMessage(message: string, history: LLMMessage[] = []): Promise<RouterResult> {
   const promptTemplate = await getPrompt("router");
   const systemPrompt = promptTemplate.replace("{{user_message}}", message);
 
-  // User message explicitly requests JSON to reinforce instruction (helps Flash Lite)
-  const userMsg = `คำถาม: ${message}\n\nตอบเป็น JSON เท่านั้น: {"category":"HR|PRODUCT|GENERAL|UNKNOWN","confidence":0.0-1.0,"needs_clarification":boolean}`;
+  // Include recent conversation context so router understands follow-up questions
+  const historyContext = history.length > 0
+    ? history.slice(-4).map(m => `${m.role === "user" ? "ผู้ใช้" : "BOB"}: ${m.content}`).join("\n") + "\n\n"
+    : "";
+
+  const userMsg = `${historyContext}คำถามล่าสุด: ${message}\n\nตอบเป็น JSON เท่านั้น: {"category":"HR|PRODUCT|GENERAL|UNKNOWN","confidence":0.0-1.0,"needs_clarification":boolean}`;
 
   const result = await callLLM({
     model: env.MODEL_ROUTER,

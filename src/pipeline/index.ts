@@ -3,6 +3,9 @@ import { checkPrecache } from "./precache.js";
 import { routeMessage, type Category } from "./router.js";
 import { callDomainBot } from "./domainBot.js";
 import { startTrace, flushObs } from "../obs/langfuse.js";
+import type { LLMMessage } from "../llm/openrouter.js";
+
+export type { LLMMessage };
 
 export interface PipelineInput {
   message: string;
@@ -10,6 +13,7 @@ export interface PipelineInput {
   userName?: string;
   department?: string;
   channel?: string;
+  history?: LLMMessage[];
 }
 
 export interface PipelineOutput {
@@ -26,7 +30,7 @@ export interface PipelineOutput {
 }
 
 export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
-  const { message, userId, userName = "คุณ", department = "" } = input;
+  const { message, userId, userName = "คุณ", department = "", history = [] } = input;
   const traceId = crypto.randomUUID();
   const t0 = Date.now();
 
@@ -51,12 +55,12 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
 
   // ── Tier 1: Router ─────────────────────────────────────────────
   const routerSpan = trace.span("router");
-  const routed = await routeMessage(message);
+  const routed = await routeMessage(message, history);
   routerSpan.end({ category: routed.category, confidence: routed.confidence });
 
   // ── Tier 2-4: Domain Bot ───────────────────────────────────────
   const botSpan = trace.span(`domain:${routed.category}`);
-  const botResult = await callDomainBot(routed.category, message, userName, department);
+  const botResult = await callDomainBot(routed.category, message, userName, department, history);
   botSpan.end({
     latencyMs: botResult.latencyMs,
     inputTokens: botResult.usage.inputTokens,

@@ -3,11 +3,16 @@
 
 import { BotFrameworkAdapter, type TurnContext, type Activity } from "botbuilder";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { runPipeline, type PipelineOutput } from "../pipeline/index.js";
+import { runPipeline, type PipelineOutput, type LLMMessage } from "../pipeline/index.js";
 import { env } from "../env.js";
 
 // Singleton adapter (re-used across warm Vercel invocations)
 let _adapter: BotFrameworkAdapter | null = null;
+
+// In-memory conversation history — persists across warm invocations, resets on cold start.
+// Key = Teams conversation ID, Value = last N message pairs.
+const MAX_HISTORY_MESSAGES = 6; // 3 turns
+const conversationHistory = new Map<string, LLMMessage[]>();
 
 function getAdapter(): BotFrameworkAdapter {
   if (!_adapter) {
@@ -78,7 +83,19 @@ export async function handleTeamsRequest(
     const userId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
     const userName = activity.from.name ?? "คุณ";
 
-    const output = await runPipeline({ message, userId, userName });
+    const convId = activity.conversation?.id ?? userId;
+    const history = conversationHistory.get(convId) ?? [];
+
+    const output = await runPipeline({ message, userId, userName, history });
+
+    // Update history — keep last MAX_HISTORY_MESSAGES messages
+    const updated = [
+      ...history,
+      { role: "user" as const, content: message },
+      { role: "assistant" as const, content: output.answer },
+    ].slice(-MAX_HISTORY_MESSAGES);
+    conversationHistory.set(convId, updated);
+
     const reply = buildAdaptiveCard(output);
     await ctx.sendActivity(reply);
   });

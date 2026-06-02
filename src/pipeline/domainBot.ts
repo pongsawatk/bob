@@ -1,4 +1,4 @@
-import { callLLM, type LLMResult } from "../llm/openrouter.js";
+import { callLLM, type LLMResult, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { getHRBundle, getProductBundle } from "../kb/inline.js";
 import { env } from "../env.js";
@@ -12,11 +12,18 @@ const CLARIFY_RESPONSE =
   "ขออภัยครับ ช่วยอธิบายเพิ่มเติมได้ไหมครับ?\n" +
   "ผมตอบเรื่อง HR (สวัสดิการ ลา OT เบิกเงิน) และ Product (Insite, Pojjaman, Builk360, JUBILI) ครับ";
 
+function currentDateTH(): string {
+  return new Date().toLocaleDateString("th-TH", {
+    year: "numeric", month: "long", day: "numeric", timeZone: "Asia/Bangkok",
+  });
+}
+
 export async function callDomainBot(
   category: Category,
   message: string,
   userName = "คุณ",
-  department = ""
+  department = "",
+  history: LLMMessage[] = []
 ): Promise<DomainResult> {
   if (category === "UNKNOWN") {
     return {
@@ -30,12 +37,14 @@ export async function callDomainBot(
   if (category === "HR") {
     const template = await getPrompt("hr");
     const kb = getHRBundle();
-    const systemPrompt = template.replace("{{KB_BUNDLE}}", kb);
+    const systemPrompt = template
+      .replace("{{KB_BUNDLE}}", kb)
+      .replace("{{CURRENT_DATE}}", currentDateTH());
 
     const result = await callLLM({
       model: env.MODEL_HR,
       systemPrompt,
-      messages: [{ role: "user", content: message }],
+      messages: [...history, { role: "user", content: message }],
       maxTokens: 1000,
       temperature: 0.3,
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
@@ -49,12 +58,13 @@ export async function callDomainBot(
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
       .replace("{{user_name}}", userName)
-      .replace("{{department}}", department);
+      .replace("{{department}}", department)
+      .replace("{{CURRENT_DATE}}", currentDateTH());
 
     const result = await callLLM({
       model: env.MODEL_PRODUCT,
       systemPrompt,
-      messages: [{ role: "user", content: message }],
+      messages: [...history, { role: "user", content: message }],
       maxTokens: 2000,
       temperature: 0.5,
       cacheSystem: env.MODEL_PRODUCT.startsWith("anthropic/"),
@@ -68,7 +78,7 @@ export async function callDomainBot(
   const result = await callLLM({
     model: env.MODEL_GENERAL,
     systemPrompt,
-    messages: [{ role: "user", content: message }],
+    messages: [...history, { role: "user", content: message }],
     maxTokens: 800,
     temperature: 0.5,
   });
