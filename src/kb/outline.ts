@@ -4,6 +4,7 @@
 // the domain of its top-level ancestor.
 
 import { env } from "../env.js";
+import { fetchRetry } from "../http/fetchRetry.js";
 
 export interface Bundles {
   hr: string;
@@ -36,14 +37,18 @@ async function fetchCollectionDocs(collectionId: string): Promise<OutlineDoc[]> 
   let offset = 0;
 
   for (;;) {
-    const res = await fetch(`${base}/api/documents.list`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.OUTLINE_API_TOKEN}`,
-        "Content-Type": "application/json",
+    const res = await fetchRetry(
+      `${base}/api/documents.list`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.OUTLINE_API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ collectionId, limit, offset }),
       },
-      body: JSON.stringify({ collectionId, limit, offset }),
-    });
+      { retries: 2, timeoutMs: 15_000 }
+    );
     if (!res.ok) {
       const body = (await res.text()).slice(0, 200);
       throw new Error(`Outline documents.list HTTP ${res.status}: ${body}`);

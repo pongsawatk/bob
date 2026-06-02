@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "../env.js";
+import { fetchRetry } from "../http/fetchRetry.js";
 
 // process.cwd() = project root both locally and on Vercel (/var/task)
 const FALLBACK_DIR = join(process.cwd(), "prompts", "fallback");
@@ -38,9 +39,12 @@ async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
     const auth = Buffer.from(
       `${env.LANGFUSE_PUBLIC_KEY}:${env.LANGFUSE_SECRET_KEY}`
     ).toString("base64");
-    const res = await fetch(
+    // Fail fast (1.5s, no retry): a slow/down Langfuse must not stall a reply —
+    // a throw/timeout here drops to the local fallback file via the catch below.
+    const res = await fetchRetry(
       `${env.LANGFUSE_HOST}/api/public/v2/prompts/${encodeURIComponent(name)}?label=production`,
-      { headers: { Authorization: `Basic ${auth}` } }
+      { headers: { Authorization: `Basic ${auth}` } },
+      { retries: 0, timeoutMs: 1500 }
     );
     if (!res.ok) return null;
     const j = (await res.json()) as { prompt?: string | Array<{ text?: string }>; version?: number };

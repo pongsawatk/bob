@@ -1,4 +1,5 @@
 import { env } from "../env.js";
+import { fetchRetry } from "../http/fetchRetry.js";
 
 export interface LLMMessage {
   role: "user" | "assistant";
@@ -61,15 +62,21 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
   };
 
   const t0 = Date.now();
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
-      "Content-Type": "application/json",
-      "X-Title": "BOB Sidekick",
+  // 50s per-attempt timeout (normal answers are 5-20s; below Vercel's 60s limit).
+  // Retries only fire on fast 429/5xx/network errors, not on timeouts.
+  const res = await fetchRetry(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "X-Title": "BOB Sidekick",
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+    { retries: 2, timeoutMs: 50_000 }
+  );
   const latencyMs = Date.now() - t0;
 
   if (!res.ok) {
