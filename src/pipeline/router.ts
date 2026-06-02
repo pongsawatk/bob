@@ -9,10 +9,16 @@ export interface RouterResult {
   confidence: number;
   needsClarification: boolean;
   rawJson: string;
+  // Observability — lets the pipeline log the router as a Langfuse generation.
+  model: string;
+  promptVersion: string;
+  latencyMs: number;
+  costUsd: number;
+  usage: { inputTokens: number; outputTokens: number };
 }
 
 export async function routeMessage(message: string, history: LLMMessage[] = []): Promise<RouterResult> {
-  const { text: promptTemplate } = await getPrompt("router");
+  const { text: promptTemplate, version: promptVersion } = await getPrompt("router");
   const systemPrompt = promptTemplate.replace("{{user_message}}", message);
 
   // Include recent conversation context so router understands follow-up questions
@@ -31,6 +37,13 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
   });
 
   const raw = result.text.trim();
+  const meta = {
+    model: env.MODEL_ROUTER,
+    promptVersion,
+    latencyMs: result.latencyMs,
+    costUsd: result.costUsd,
+    usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
+  };
 
   // Parse JSON — be defensive
   try {
@@ -52,9 +65,10 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
       confidence: parsed.confidence ?? 0.5,
       needsClarification: parsed.needs_clarification ?? false,
       rawJson: raw,
+      ...meta,
     };
   } catch {
     // If parsing fails, default to UNKNOWN
-    return { category: "UNKNOWN", confidence: 0, needsClarification: true, rawJson: raw };
+    return { category: "UNKNOWN", confidence: 0, needsClarification: true, rawJson: raw, ...meta };
   }
 }

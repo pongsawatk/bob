@@ -158,7 +158,7 @@ export async function handleTeamsRequest(
     const convId = activity.conversation?.id ?? userId;
     const history = await getHistory(convId);
 
-    const output = await runPipeline({ message, userId, userName, history });
+    const output = await runPipeline({ message, userId, userName, history, sessionId: convId, channel: "teams" });
 
     await appendHistory(convId, message, output.answer);
 

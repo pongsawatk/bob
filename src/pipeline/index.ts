@@ -13,6 +13,8 @@ export interface PipelineInput {
   userName?: string;
   department?: string;
   channel?: string;
+  /** Conversation id — used as the Langfuse session id to group turns. */
+  sessionId?: string;
   history?: LLMMessage[];
 }
 
@@ -30,11 +32,12 @@ export interface PipelineOutput {
 }
 
 export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
-  const { message, userId, userName = "คุณ", department = "", history = [] } = input;
+  const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [] } = input;
   const traceId = crypto.randomUUID();
   const t0 = Date.now();
 
-  const trace = startTrace(traceId, userId, message);
+  const trace = startTrace({ traceId, userId, sessionId, input: message });
+  const baseMeta = { channel, department, userName };
 
   // ── Tier 0: Pre-cache ──────────────────────────────────────────
   const precacheSpan = trace.span("precache");
@@ -42,7 +45,11 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   precacheSpan.end({ hit: !!precacheHit, category: precacheHit?.category });
 
   if (precacheHit) {
-    trace.update({ output: precacheHit.answer, metadata: { category: precacheHit.category, fromCache: true } });
+    trace.update({
+      output: precacheHit.answer,
+      metadata: { ...baseMeta, category: precacheHit.category, fromCache: true },
+      tags: [channel, precacheHit.category, "precache"],
+    });
     await flushObs();
     return {
       traceId,
@@ -55,9 +62,22 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   }
 
   // ── Tier 1: Router ─────────────────────────────────────────────
-  const routerSpan = trace.span("router");
   const routed = await routeMessage(message, history);
-  routerSpan.end({ category: routed.category, confidence: routed.confidence });
+  trace.generation({
+    name: "router",
+    model: routed.model,
+    version: routed.promptVersion,
+    input: message,
+    output: routed.rawJson,
+    latencyMs: routed.latencyMs,
+    usage: {
+      input: routed.usage.inputTokens,
+      output: routed.usage.outputTokens,
+      total: routed.usage.inputTokens + routed.usage.outputTokens,
+      totalCost: routed.costUsd,
+    },
+    metadata: { confidence: routed.confidence },
+  });
 
   // ── Tier 2-4: Domain Bot ───────────────────────────────────────
   const botResult = await callDomainBot(routed.category, message, userName, department, history);
@@ -74,17 +94,21 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
       total: botResult.usage.inputTokens + botResult.usage.outputTokens,
       totalCost: botResult.costUsd,
     },
+    metadata: { cacheReadTokens: botResult.usage.cacheReadTokens },
   });
 
   trace.update({
     output: botResult.text,
     metadata: {
+      ...baseMeta,
       category: routed.category,
+      confidence: routed.confidence,
       latencyMs: Date.now() - t0,
       inputTokens: botResult.usage.inputTokens,
       outputTokens: botResult.usage.outputTokens,
       cacheReadTokens: botResult.usage.cacheReadTokens,
     },
+    tags: [channel, routed.category, "llm"],
   });
 
   await flushObs();
