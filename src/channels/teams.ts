@@ -14,6 +14,9 @@ function getAdapter(): BotFrameworkAdapter {
     _adapter = new BotFrameworkAdapter({
       appId: env.AZURE_BOT_ID || undefined,
       appPassword: env.AZURE_BOT_SECRET || undefined,
+      // Single-tenant bot: acquire bot-to-channel token from this tenant.
+      // Leave unset (empty) for multi-tenant bots.
+      channelAuthTenant: env.AZURE_TENANT_ID || undefined,
     });
     _adapter.onTurnError = async (ctx, err) => {
       console.error("Teams adapter error:", err);
