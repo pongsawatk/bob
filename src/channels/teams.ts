@@ -1,7 +1,7 @@
 // MS Teams channel adapter — wraps Bot Framework request/response.
 // AZURE_BOT_ID / AZURE_BOT_SECRET must be set for authentication to work.
 
-import { BotFrameworkAdapter, TeamsInfo, type TurnContext, type Activity } from "botbuilder";
+import { ActivityTypes, BotFrameworkAdapter, TeamsInfo, type TurnContext, type Activity } from "botbuilder";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runPipeline, type PipelineOutput } from "../pipeline/index.js";
 import { refreshKB } from "../kb/index.js";
@@ -73,6 +73,27 @@ function buildAdaptiveCard(output: PipelineOutput): Partial<Activity> {
 
 function adminEmails(): string[] {
   return env.KB_ADMIN_EMAILS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+// Show "BOB is typing…" while the pipeline runs. Teams clears the indicator
+// after a few seconds, so we refresh it on a cancellable timer until we reply.
+// Returns a stop() that clears the next scheduled send.
+function startTyping(ctx: TurnContext): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const send = () => {
+    ctx.sendActivity({ type: ActivityTypes.Typing }).catch(() => {});
+  };
+  const schedule = () => {
+    timer = setTimeout(() => {
+      send();
+      schedule();
+    }, 4000);
+  };
+  send();
+  schedule();
+  return () => {
+    if (timer) clearTimeout(timer);
+  };
 }
 
 // Reset-memory command: /clear, /reset, or a Thai phrase used on its own.
@@ -150,19 +171,26 @@ export async function handleTeamsRequest(
       return;
     }
 
-    // Extract identity from Azure AD payload. Prefer email as the Langfuse user id.
-    const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
-    const userName = activity.from.name ?? "คุณ";
-    const userId = (await resolveEmail(ctx, aadId)) || aadId;
+    // Real question — keep a typing indicator alive while we resolve identity
+    // and run the (sometimes 10–20s) LLM pipeline.
+    const stopTyping = startTyping(ctx);
+    try {
+      // Extract identity from Azure AD payload. Prefer email as the Langfuse user id.
+      const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
+      const userName = activity.from.name ?? "คุณ";
+      const userId = (await resolveEmail(ctx, aadId)) || aadId;
 
-    const convId = activity.conversation?.id ?? userId;
-    const history = await getHistory(convId);
+      const convId = activity.conversation?.id ?? userId;
+      const history = await getHistory(convId);
 
-    const output = await runPipeline({ message, userId, userName, history, sessionId: convId, channel: "teams" });
+      const output = await runPipeline({ message, userId, userName, history, sessionId: convId, channel: "teams" });
 
-    await appendHistory(convId, message, output.answer);
+      await appendHistory(convId, message, output.answer);
 
-    const reply = buildAdaptiveCard(output);
-    await ctx.sendActivity(reply);
+      const reply = buildAdaptiveCard(output);
+      await ctx.sendActivity(reply);
+    } finally {
+      stopTyping();
+    }
   });
 }
