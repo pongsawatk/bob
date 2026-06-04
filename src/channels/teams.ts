@@ -8,6 +8,7 @@ import { refreshKB } from "../kb/index.js";
 import { scoreTrace } from "../obs/langfuse.js";
 import { getHistory, appendHistory, clearHistory } from "./history.js";
 import { saveConvRef } from "./convref.js";
+import { getRedis } from "../store/redis.js";
 import { checkRateLimit } from "./ratelimit.js";
 import { alertError } from "../obs/alert.js";
 import { env } from "../env.js";
@@ -161,9 +162,23 @@ export async function handleTeamsRequest(
       await saveConvRef(proactiveId, TurnContext.getConversationReference(activity));
     }
 
-    // Greet the user the moment BOB is installed for them (proactive first contact).
-    if (activity.type === "installationUpdate" && activity.action === "add") {
-      await ctx.sendActivity(WELCOME_MESSAGE);
+    // Greet the user when BOB is provisioned for them. This fires when a user
+    // opens BOB from the Apps list the first time (the action isn't always "add"),
+    // so we greet on any non-"remove" installationUpdate but dedupe via a Redis
+    // flag so each user is greeted exactly once across client re-syncs.
+    if (activity.type === "installationUpdate") {
+      if (activity.action !== "remove" && proactiveId) {
+        let firstTime = true;
+        const r = getRedis();
+        if (r) {
+          try {
+            firstTime = (await r.set(`bob:greeted:${proactiveId}`, 1, { nx: true, ex: 60 * 60 * 24 * 365 })) !== null;
+          } catch (err) {
+            console.error("greet dedupe: redis failed:", err); // fail-open → greet
+          }
+        }
+        if (firstTime) await ctx.sendActivity(WELCOME_MESSAGE);
+      }
       return;
     }
 
