@@ -1,15 +1,22 @@
 // MS Teams channel adapter — wraps Bot Framework request/response.
 // AZURE_BOT_ID / AZURE_BOT_SECRET must be set for authentication to work.
 
-import { ActivityTypes, BotFrameworkAdapter, TeamsInfo, type TurnContext, type Activity } from "botbuilder";
+import { ActivityTypes, BotFrameworkAdapter, TeamsInfo, TurnContext, type Activity } from "botbuilder";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runPipeline, type PipelineOutput } from "../pipeline/index.js";
 import { refreshKB } from "../kb/index.js";
 import { scoreTrace } from "../obs/langfuse.js";
 import { getHistory, appendHistory, clearHistory } from "./history.js";
+import { saveConvRef } from "./convref.js";
 import { checkRateLimit } from "./ratelimit.js";
 import { alertError } from "../obs/alert.js";
 import { env } from "../env.js";
+
+// First message BOB sends when a user installs it (proactive first contact).
+const WELCOME_MESSAGE =
+  "สวัสดีครับ ผม BOB Sidekick ผู้ช่วย AI ของ Builk One Group 🤖\n\n" +
+  "ถามผมได้เลยครับ เช่น เรื่อง HR (วันลา สวัสดิการ) หรือข้อมูลผลิตภัณฑ์ Contech " +
+  "พิมพ์คำถามมาได้เลยครับ 😊";
 
 // Singleton adapter (re-used across warm Vercel invocations)
 let _adapter: BotFrameworkAdapter | null = null;
@@ -146,6 +153,19 @@ export async function handleTeamsRequest(
 
   await adapter.processActivity(req as never, res as never, async (ctx: TurnContext) => {
     const activity = ctx.activity;
+
+    // Capture/refresh this user's conversation reference so BOB can message them
+    // first later (proactive). Cheap, and keeps serviceUrl fresh per interaction.
+    const proactiveId = activity.from?.aadObjectId;
+    if (proactiveId && (activity.type === "message" || activity.type === "installationUpdate")) {
+      await saveConvRef(proactiveId, TurnContext.getConversationReference(activity));
+    }
+
+    // Greet the user the moment BOB is installed for them (proactive first contact).
+    if (activity.type === "installationUpdate" && activity.action === "add") {
+      await ctx.sendActivity(WELCOME_MESSAGE);
+      return;
+    }
 
     // Handle feedback button clicks
     if (activity.type === "message" && (activity.value as { action?: string })?.action === "feedback") {
