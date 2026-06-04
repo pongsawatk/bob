@@ -31,19 +31,27 @@ loadEnv();
 
 const { values: args } = parseArgs({
   options: {
-    to:        { type: "string" },
-    msg:       { type: "string" },
-    team:      { type: "string" },  // Teams team/channel link or "19:...@thread.tacv2" id — used to read the member roster
-    all:       { type: "boolean" }, // DM everyone with a stored conversation reference
-    "dry-run": { type: "boolean" }, // list recipients only, don't send
+    to:          { type: "string" },
+    msg:         { type: "string" },
+    team:        { type: "string" },  // Teams team/channel link or "19:...@thread.tacv2" id — used to read the member roster
+    all:         { type: "boolean" }, // DM everyone with a stored conversation reference
+    provision:   { type: "boolean" }, // Graph-install BOB for users → fires installationUpdate → bot greets
+    emails:      { type: "string" },  // comma-separated emails to target (with --provision)
+    "all-users": { type: "boolean" }, // target every enabled INTERNAL user in the org (with --provision)
+    domain:      { type: "string" },  // restrict --all-users to this email domain (e.g., builk.com)
+    "app-id":    { type: "string" },  // override the Teams catalog app id
+    "dry-run":   { type: "boolean" }, // list recipients only, don't act
   },
 });
 
 // Need at least one target selector.
-if (!args.team && !args.to && !args.all) {
-  console.error("❌ ระบุเป้าหมาย: --to <email> | --all (ทุก ref ที่เก็บไว้) | --team <link|threadId>");
+if (!args.team && !args.to && !args.all && !args.provision) {
+  console.error("❌ ระบุเป้าหมาย: --to <email> | --all | --team <link|threadId> | --provision (--emails a,b | --all-users)");
   process.exit(1);
 }
+
+// Teams catalog app id for BOB (stable). Override with --app-id if it ever changes.
+const APP_CATALOG_ID = args["app-id"] ?? "d3d89d68-4c1e-44d0-83a8-85e57e977a28";
 
 const CLIENT_ID     = process.env.AZURE_BOT_ID;
 const CLIENT_SECRET = process.env.AZURE_BOT_SECRET;
@@ -88,6 +96,102 @@ async function graph(token, method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status}: ${JSON.stringify(data)}`);
   return data;
+}
+
+// ── Mode 5: Graph-install BOB for users → fires installationUpdate → bot greets ─
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function listAllUsers(token) {
+  const users = [];
+  let url =
+    "https://graph.microsoft.com/v1.0/users?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType&$top=999";
+  while (url) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (!res.ok) throw new Error(`list users → ${res.status}: ${JSON.stringify(data)}`);
+    users.push(...(data.value ?? []));
+    url = data["@odata.nextLink"] ?? null;
+  }
+  return users;
+}
+
+async function provisionUsers() {
+  const token = await getGraphToken();
+
+  // Resolve the target list.
+  let targets = [];
+  if (args.emails) {
+    const emails = args.emails.split(",").map((s) => s.trim()).filter(Boolean);
+    process.stdout.write(`• Resolving ${emails.length} email(s)... `);
+    for (const e of emails) {
+      const u = await graph(token, "GET", `/users/${encodeURIComponent(e)}?$select=id,displayName,userPrincipalName`);
+      targets.push(u);
+    }
+    console.log("✅");
+  } else if (args["all-users"]) {
+    process.stdout.write("• Listing all org users... ");
+    const all = await listAllUsers(token);
+    const domain = args.domain?.toLowerCase();
+    targets = all.filter((u) => {
+      if (u.accountEnabled === false) return false;
+      if (u.userType === "Guest") return false;            // skip external guests
+      const upn = (u.userPrincipalName ?? "").toLowerCase();
+      if (upn.includes("#ext#")) return false;             // skip external/B2B
+      if (domain) return (u.mail ?? upn).toLowerCase().endsWith("@" + domain);
+      return true;
+    });
+    console.log(`✅  (${all.length} total → ${targets.length} internal${domain ? " @" + domain : ""})`);
+  } else {
+    console.error("❌ --provision ต้องระบุ --emails a,b,c หรือ --all-users");
+    process.exit(1);
+  }
+
+  console.log(`\nจะติดตั้ง BOB (Graph) ให้ ${targets.length} คน → bot จะทักทายอัตโนมัติเมื่อ install สำเร็จ`);
+  for (const u of targets.slice(0, 10)) {
+    console.log(`  • ${u.displayName ?? "?"}  <${u.userPrincipalName ?? "?"}>`);
+  }
+  if (targets.length > 10) console.log(`  … และอีก ${targets.length - 10} คน`);
+
+  if (args["dry-run"]) {
+    console.log("\n(dry-run) ไม่ติดตั้งจริง — เอา --dry-run ออกเพื่อรันจริง");
+    return;
+  }
+
+  console.log("");
+  let installed = 0, already = 0, fail = 0;
+  for (const u of targets) {
+    const who = u.displayName ?? u.userPrincipalName ?? u.id;
+    process.stdout.write(`  → install for ${who}... `);
+    try {
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/users/${u.id}/teamwork/installedApps`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            "teamsApp@odata.bind": `https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/${APP_CATALOG_ID}`,
+          }),
+        }
+      );
+      if (res.status === 201) { console.log("✅ installed → จะทักทาย"); installed++; }
+      else if (res.status === 409) { console.log("• มีอยู่แล้ว (ต้องเปิดเอง 1 ครั้ง)"); already++; }
+      else {
+        const d = await res.json().catch(() => ({}));
+        console.log(`❌ ${res.status} ${JSON.stringify(d).slice(0, 100)}`);
+        fail++;
+      }
+    } catch (err) {
+      console.log(`❌ ${err.message.slice(0, 100)}`);
+      fail++;
+    }
+    await sleep(150); // be gentle on Graph throttling
+  }
+  console.log(
+    `\n✅ ติดตั้งใหม่ ${installed} คน (จะได้ข้อความทักทาย)` +
+    ` · มีอยู่แล้ว ${already} คน` +
+    (fail ? ` · ❌ ล้มเหลว ${fail} คน` : "")
+  );
 }
 
 function getRedisClient() {
@@ -370,6 +474,13 @@ async function triggerWelcome(token, userId) {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+  // Provision mode: Graph-install BOB for users → fires installationUpdate → bot greets.
+  if (args.provision) {
+    console.log(`\n🚀 Provision (Graph install) → bot greets on install  (${args["dry-run"] ? "dry-run" : "run"})\n`);
+    await provisionUsers();
+    return;
+  }
+
   // Broadcast to everyone with a stored conversation reference.
   if (args.all) {
     console.log(`\n📨 Proactive → all stored refs 1:1  (${args["dry-run"] ? "dry-run" : "send"})\n`);
