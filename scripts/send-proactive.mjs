@@ -39,6 +39,7 @@ const { values: args } = parseArgs({
     emails:      { type: "string" },  // comma-separated emails to target (with --provision)
     "all-users": { type: "boolean" }, // target every enabled INTERNAL user in the org (with --provision)
     domain:      { type: "string" },  // restrict --all-users to this email domain (e.g., builk.com)
+    limit:       { type: "string" },  // cap the number of users (staged rollout)
     "app-id":    { type: "string" },  // override the Teams catalog app id
     "dry-run":   { type: "boolean" }, // list recipients only, don't act
   },
@@ -147,6 +148,8 @@ async function provisionUsers() {
     process.exit(1);
   }
 
+  if (args.limit) targets = targets.slice(0, parseInt(args.limit, 10));
+
   console.log(`\nจะติดตั้ง BOB (Graph) ให้ ${targets.length} คน → bot จะทักทายอัตโนมัติเมื่อ install สำเร็จ`);
   for (const u of targets.slice(0, 10)) {
     console.log(`  • ${u.displayName ?? "?"}  <${u.userPrincipalName ?? "?"}>`);
@@ -164,16 +167,27 @@ async function provisionUsers() {
     const who = u.displayName ?? u.userPrincipalName ?? u.id;
     process.stdout.write(`  → install for ${who}... `);
     try {
-      const res = await fetch(
-        `https://graph.microsoft.com/v1.0/users/${u.id}/teamwork/installedApps`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            "teamsApp@odata.bind": `https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/${APP_CATALOG_ID}`,
-          }),
+      let res, attempt = 0;
+      while (true) {
+        res = await fetch(
+          `https://graph.microsoft.com/v1.0/users/${u.id}/teamwork/installedApps`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              "teamsApp@odata.bind": `https://graph.microsoft.com/v1.0/appCatalogs/teamsApps/${APP_CATALOG_ID}`,
+            }),
+          }
+        );
+        if (res.status === 429 && attempt < 5) {        // throttled → back off + retry
+          const ra = parseInt(res.headers.get("retry-after") || "10", 10);
+          process.stdout.write(`(429, รอ ${ra}s) `);
+          await sleep((ra || 10) * 1000);
+          attempt++;
+          continue;
         }
-      );
+        break;
+      }
       if (res.status === 201) { console.log("✅ installed → จะทักทาย"); installed++; }
       else if (res.status === 409) { console.log("• มีอยู่แล้ว (ต้องเปิดเอง 1 ครั้ง)"); already++; }
       else {
@@ -185,7 +199,7 @@ async function provisionUsers() {
       console.log(`❌ ${err.message.slice(0, 100)}`);
       fail++;
     }
-    await sleep(150); // be gentle on Graph throttling
+    await sleep(200); // be gentle on Graph throttling
   }
   console.log(
     `\n✅ ติดตั้งใหม่ ${installed} คน (จะได้ข้อความทักทาย)` +
