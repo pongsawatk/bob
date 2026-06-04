@@ -36,6 +36,7 @@ const { values: args } = parseArgs({
     team:        { type: "string" },  // Teams team/channel link or "19:...@thread.tacv2" id — used to read the member roster
     all:         { type: "boolean" }, // DM everyone with a stored conversation reference
     provision:   { type: "boolean" }, // Graph-install BOB for users → fires installationUpdate → bot greets
+    check:       { type: "boolean" }, // read-only: is BOB currently installed for these users? (--emails)
     emails:      { type: "string" },  // comma-separated emails to target (with --provision)
     "all-users": { type: "boolean" }, // target every enabled INTERNAL user in the org (with --provision)
     domain:      { type: "string" },  // restrict --all-users to this email domain (e.g., builk.com)
@@ -46,8 +47,8 @@ const { values: args } = parseArgs({
 });
 
 // Need at least one target selector.
-if (!args.team && !args.to && !args.all && !args.provision) {
-  console.error("❌ ระบุเป้าหมาย: --to <email> | --all | --team <link|threadId> | --provision (--emails a,b | --all-users)");
+if (!args.team && !args.to && !args.all && !args.provision && !args.check) {
+  console.error("❌ ระบุเป้าหมาย: --to <email> | --all | --team <link|threadId> | --provision | --check (--emails a,b | --all-users)");
   process.exit(1);
 }
 
@@ -115,6 +116,33 @@ async function listAllUsers(token) {
     url = data["@odata.nextLink"] ?? null;
   }
   return users;
+}
+
+// Read-only: report whether BOB is currently installed for each email.
+async function checkInstall() {
+  if (!args.emails) {
+    console.error("❌ --check ต้องใช้คู่กับ --emails a,b,c");
+    process.exit(1);
+  }
+  const token = await getGraphToken();
+  const emails = args.emails.split(",").map((s) => s.trim()).filter(Boolean);
+  let installedN = 0, notN = 0;
+  for (const e of emails) {
+    try {
+      const u = await graph(token, "GET", `/users/${encodeURIComponent(e)}?$select=id,displayName`);
+      const apps = await graph(token, "GET", `/users/${u.id}/teamwork/installedApps?$expand=teamsApp`);
+      const has = (apps.value ?? []).some(
+        (a) => a.teamsApp?.displayName?.toLowerCase().includes("bob") || a.teamsApp?.id === APP_CATALOG_ID
+      );
+      console.log(`  ${has ? "🟡 ยังติดตั้งอยู่ (entitled)" : "✅ หลุดแล้ว (un-entitled)"}  ${u.displayName} <${e}>`);
+      has ? installedN++ : notN++;
+    } catch (err) {
+      console.log(`  ❌ ${e}: ${err.message.slice(0, 80)}`);
+    }
+  }
+  console.log(`\nสรุป: ยังติดตั้ง ${installedN} คน · หลุดแล้ว ${notN} คน`);
+  if (installedN === 0) console.log("→ พร้อม provision ได้เลย (ทุกคน un-entitled แล้ว)");
+  else console.log("→ ยังมีคนที่ entitled อยู่ รอ propagate แล้วเช็คซ้ำ");
 }
 
 async function provisionUsers() {
@@ -488,6 +516,13 @@ async function triggerWelcome(token, userId) {
 // ── main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+  // Read-only check: is BOB still installed for these users? (un-entitle progress)
+  if (args.check) {
+    console.log(`\n🔎 Check install state\n`);
+    await checkInstall();
+    return;
+  }
+
   // Provision mode: Graph-install BOB for users → fires installationUpdate → bot greets.
   if (args.provision) {
     console.log(`\n🚀 Provision (Graph install) → bot greets on install  (${args["dry-run"] ? "dry-run" : "run"})\n`);
