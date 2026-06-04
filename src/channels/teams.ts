@@ -155,32 +155,39 @@ export async function handleTeamsRequest(
   await adapter.processActivity(req as never, res as never, async (ctx: TurnContext) => {
     const activity = ctx.activity;
 
-    // Capture/refresh this user's conversation reference so BOB can message them
-    // first later (proactive). Cheap, and keeps serviceUrl fresh per interaction.
+    // Capture/refresh this user's conversation reference on normal messages so
+    // BOB can message them first later (proactive). Keeps serviceUrl fresh.
     const proactiveId = activity.from?.aadObjectId;
-    if (proactiveId && (activity.type === "message" || activity.type === "installationUpdate")) {
+    if (proactiveId && activity.type === "message") {
       await saveConvRef(proactiveId, TurnContext.getConversationReference(activity));
     }
 
-    // Greet the user when BOB is provisioned for them. This fires when a user
-    // opens BOB from the Apps list the first time (the action isn't always "add"),
-    // so we greet on any non-"remove" installationUpdate but dedupe via a Redis
-    // flag so each user is greeted exactly once across client re-syncs.
-    if (activity.type === "installationUpdate") {
-      if (activity.action !== "remove" && proactiveId) {
-        let firstTime = true;
-        const r = getRedis();
-        if (r) {
-          try {
-            firstTime = (await r.set(`bob:greeted:${proactiveId}`, 1, { nx: true, ex: 60 * 60 * 24 * 365 })) !== null;
-          } catch (err) {
-            console.error("greet dedupe: redis failed:", err); // fail-open → greet
-          }
+    // First contact: BOB was installed/added for this user. Teams signals this
+    // either as installationUpdate (action "add") when a user opens BOB, or as
+    // conversationUpdate with the bot in membersAdded when installed via Graph
+    // (proactive install). Handle both: store the ref + greet once (deduped).
+    const botId = activity.recipient?.id;
+    const isInstall = activity.type === "installationUpdate" && activity.action !== "remove";
+    const botAdded =
+      activity.type === "conversationUpdate" &&
+      (activity.membersAdded ?? []).some((m) => m.id === botId);
+    if (isInstall || botAdded) {
+      const key = activity.from?.aadObjectId ?? activity.conversation?.id ?? "unknown";
+      await saveConvRef(key, TurnContext.getConversationReference(activity));
+      let firstTime = true;
+      const r = getRedis();
+      if (r) {
+        try {
+          firstTime = (await r.set(`bob:greeted:${key}`, 1, { nx: true, ex: 60 * 60 * 24 * 365 })) !== null;
+        } catch (err) {
+          console.error("greet dedupe: redis failed:", err); // fail-open → greet
         }
-        if (firstTime) await ctx.sendActivity(WELCOME_MESSAGE);
       }
+      if (firstTime) await ctx.sendActivity(WELCOME_MESSAGE);
       return;
     }
+    // Ignore other lifecycle events (removes, member changes, etc.).
+    if (activity.type === "installationUpdate" || activity.type === "conversationUpdate") return;
 
     // Handle feedback button clicks
     if (activity.type === "message" && (activity.value as { action?: string })?.action === "feedback") {
