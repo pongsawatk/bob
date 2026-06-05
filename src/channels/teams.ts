@@ -181,18 +181,21 @@ export async function handleTeamsRequest(
       activity.type === "conversationUpdate" &&
       (activity.membersAdded ?? []).some((m) => m.id === botId);
     if (isInstall || botAdded) {
-      const ref = TurnContext.getConversationReference(activity);
-      await saveConvRef(activity.from?.aadObjectId ?? activity.conversation?.id ?? "unknown", ref);
-
-      // Greet exactly once per user. A Graph install fires BOTH installationUpdate
-      // and conversationUpdate — greeting on both (with different keys) double-messages.
-      // So greet only on installationUpdate, deduped by the stable aadObjectId.
-      if (isInstall && activity.from?.aadObjectId) {
+      // A Graph install fires BOTH installationUpdate (no aadObjectId) and
+      // conversationUpdate (has aadObjectId) for the SAME conversation id. So:
+      //  - save the ref only when aadObjectId is present (clean key per user)
+      //  - greet once per conversation.id, which is stable across both events,
+      //    so the user is greeted exactly once (not twice, not zero times).
+      if (activity.from?.aadObjectId) {
+        await saveConvRef(activity.from.aadObjectId, TurnContext.getConversationReference(activity));
+      }
+      const convId = activity.conversation?.id;
+      if (convId) {
         let firstTime = true;
         const r = getRedis();
         if (r) {
           try {
-            firstTime = (await r.set(`bob:greeted:${activity.from.aadObjectId}`, 1, { nx: true, ex: 60 * 60 * 24 * 365 })) !== null;
+            firstTime = (await r.set(`bob:greeted:${convId}`, 1, { nx: true, ex: 60 * 60 * 24 * 365 })) !== null;
           } catch (err) {
             console.error("greet dedupe: redis failed:", err); // fail-open → greet
           }
