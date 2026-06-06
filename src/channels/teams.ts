@@ -184,15 +184,6 @@ export async function handleTeamsRequest(
   await adapter.processActivity(req as never, res as never, async (ctx: TurnContext) => {
     const activity = ctx.activity;
 
-    // Diagnostic: log every inbound activity so we can see exactly what Teams
-    // sends (esp. on Graph proactive install). Safe to keep; cheap.
-    console.log(
-      `[teams] type=${activity.type} action=${activity.action ?? "-"}` +
-      ` aad=${activity.from?.aadObjectId ?? "-"}` +
-      ` membersAdded=${(activity.membersAdded ?? []).map((m) => m.id).join("|") || "-"}` +
-      ` conv=${activity.conversation?.id ?? "-"}`
-    );
-
     // Capture/refresh this user's conversation reference on normal messages so
     // BOB can message them first later (proactive). Keeps serviceUrl fresh.
     const proactiveId = activity.from?.aadObjectId;
