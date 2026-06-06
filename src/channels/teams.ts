@@ -14,14 +14,32 @@ import { alertError } from "../obs/alert.js";
 import { env } from "../env.js";
 
 // First message BOB sends when a user installs it (proactive first contact).
-const WELCOME_MESSAGE =
-  "👋 สวัสดีครับ! ผม BOB ผู้ช่วย AI ของ Builk One Group — ถามเรื่องงานได้เลย " +
-  "ทั้งวันลา สวัสดิการ เบิกจ่าย หรือ Product ตอบให้ 24 ชม. ไม่ต้องเกรงใจครับ 😄\n" +
-  "ลองพิมพ์ดูเลย เช่น:\n" +
-  "• \"ลาพักร้อนได้กี่วัน?\"\n" +
-  "• \"เบิกค่าทันตกรรมยังไง?\"\n" +
-  "• \"Insite ทำอะไรได้บ้าง?\"\n" +
-  "เจอคำตอบถูก/ผิด กด 👍/👎 ช่วยผมพัฒนาได้ครับ";
+// Sent as an Adaptive Card because plain-text "\n" line breaks are collapsed by
+// Teams — the card gives reliable layout for the intro + example questions.
+function buildWelcomeCard(): Partial<Activity> {
+  return {
+    type: "message",
+    attachments: [
+      {
+        contentType: "application/vnd.microsoft.card.adaptive",
+        content: {
+          $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            { type: "TextBlock", wrap: true, text: "👋 สวัสดีครับ! ผม **BOB** ผู้ช่วย AI ของ Builk One Group" },
+            { type: "TextBlock", wrap: true, text: "ถามเรื่องงานได้เลย ทั้ง **วันลา · สวัสดิการ · เบิกจ่าย · Product** ตอบให้ 24 ชม. ไม่ต้องเกรงใจครับ 😄" },
+            { type: "TextBlock", wrap: true, weight: "Bolder", spacing: "Medium", text: "ลองพิมพ์ดูเลย เช่น 👇" },
+            { type: "TextBlock", wrap: true, text: "•  \"ลาพักร้อนได้กี่วัน?\"" },
+            { type: "TextBlock", wrap: true, text: "•  \"เบิกค่าทันตกรรมยังไง?\"" },
+            { type: "TextBlock", wrap: true, text: "•  \"Insite ทำอะไรได้บ้าง?\"" },
+            { type: "TextBlock", wrap: true, isSubtle: true, size: "Small", spacing: "Medium", text: "เจอคำตอบถูก/ผิด กด 👍 / 👎 ใต้คำตอบ ช่วยผมพัฒนาได้ครับ" },
+          ],
+        },
+      },
+    ],
+  };
+}
 
 // Singleton adapter (re-used across warm Vercel invocations)
 let _adapter: BotFrameworkAdapter | null = null;
@@ -204,7 +222,7 @@ export async function handleTeamsRequest(
             console.error("greet dedupe: redis failed:", err); // fail-open → greet
           }
         }
-        if (firstTime) await ctx.sendActivity(WELCOME_MESSAGE);
+        if (firstTime) await ctx.sendActivity(buildWelcomeCard());
       }
       return;
     }
