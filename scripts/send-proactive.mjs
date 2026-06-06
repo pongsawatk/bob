@@ -22,6 +22,7 @@
 
 import { loadEnv } from "./_load-env.mjs";
 import { parseArgs } from "node:util";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { Redis } from "@upstash/redis";
 import botbuilder from "botbuilder";
 
@@ -37,9 +38,11 @@ const { values: args } = parseArgs({
     all:         { type: "boolean" }, // DM everyone with a stored conversation reference
     provision:   { type: "boolean" }, // Graph-install BOB for users → fires installationUpdate → bot greets
     check:       { type: "boolean" }, // read-only: is BOB currently installed for these users? (--emails)
+    force:       { type: "boolean" }, // with --provision: uninstall first, then reinstall (re-fires greet for already-installed users)
     emails:      { type: "string" },  // comma-separated emails to target (with --provision)
     "all-users": { type: "boolean" }, // target every enabled INTERNAL user in the org (with --provision)
     domain:      { type: "string" },  // restrict --all-users to this email domain (e.g., builk.com)
+    exclude:     { type: "string" },  // comma-separated emails to skip
     limit:       { type: "string" },  // cap the number of users (staged rollout)
     "app-id":    { type: "string" },  // override the Teams catalog app id
     "dry-run":   { type: "boolean" }, // list recipients only, don't act
@@ -162,15 +165,28 @@ async function provisionUsers() {
     process.stdout.write("• Listing all org users... ");
     const all = await listAllUsers(token);
     const domain = args.domain?.toLowerCase();
+    const manualExclude = new Set(
+      (args.exclude ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean)
+    );
+    // Skip shared mailboxes / resigned / service accounts.
+    const EXCLUDE_NAME = /\[resign|\(shared\)|shared mailbox|do not use|ห้ามใช้|test account/i;
+    const EXCLUDE_LOCAL = new Set([
+      "acc", "accba", "account", "admin", "adobe01", "adobe02",
+      "info", "support", "noreply", "no-reply", "test", "notification", "notifications",
+    ]);
     targets = all.filter((u) => {
       if (u.accountEnabled === false) return false;
       if (u.userType === "Guest") return false;            // skip external guests
       const upn = (u.userPrincipalName ?? "").toLowerCase();
       if (upn.includes("#ext#")) return false;             // skip external/B2B
-      if (domain) return (u.mail ?? upn).toLowerCase().endsWith("@" + domain);
+      const email = (u.mail ?? upn).toLowerCase();
+      if (domain && !email.endsWith("@" + domain)) return false;
+      if (manualExclude.has(email)) return false;
+      if (EXCLUDE_NAME.test(u.displayName ?? "")) return false;
+      if (EXCLUDE_LOCAL.has(email.split("@")[0])) return false;
       return true;
     });
-    console.log(`✅  (${all.length} total → ${targets.length} internal${domain ? " @" + domain : ""})`);
+    console.log(`✅  (${all.length} total → ${targets.length} หลังกรอง${domain ? " @" + domain : ""})`);
   } else {
     console.error("❌ --provision ต้องระบุ --emails a,b,c หรือ --all-users");
     process.exit(1);
@@ -185,7 +201,12 @@ async function provisionUsers() {
   if (targets.length > 10) console.log(`  … และอีก ${targets.length - 10} คน`);
 
   if (args["dry-run"]) {
-    console.log("\n(dry-run) ไม่ติดตั้งจริง — เอา --dry-run ออกเพื่อรันจริง");
+    // Write the full target list to a CSV for review before the real run.
+    mkdirSync("test-results", { recursive: true });
+    const outPath = `test-results/provision-targets-${new Date().toISOString().slice(0, 10)}.csv`;
+    const rows = ["name,email", ...targets.map((u) => `"${(u.displayName ?? "").replace(/"/g, "'")}",${u.userPrincipalName ?? ""}`)];
+    writeFileSync(outPath, rows.join("\n"), "utf8");
+    console.log(`\n(dry-run) ไม่ติดตั้งจริง — เขียนรายชื่อทั้ง ${targets.length} คนไว้ที่:\n  ${outPath}`);
     return;
   }
 
@@ -195,6 +216,23 @@ async function provisionUsers() {
     const who = u.displayName ?? u.userPrincipalName ?? u.id;
     process.stdout.write(`  → install for ${who}... `);
     try {
+      // --force: uninstall an existing BOB install first so the POST below is a
+      // fresh install that re-fires installationUpdate (re-greets the user).
+      if (args.force) {
+        try {
+          const apps = await graph(token, "GET", `/users/${u.id}/teamwork/installedApps?$expand=teamsApp`);
+          const inst = (apps.value ?? []).find(
+            (a) => a.teamsApp?.displayName?.toLowerCase().includes("bob") || a.teamsApp?.id === APP_CATALOG_ID
+          );
+          if (inst) {
+            await graph(token, "DELETE", `/users/${u.id}/teamwork/installedApps/${inst.id}`);
+            process.stdout.write("(uninstalled) ");
+            await sleep(800);
+          }
+        } catch (e) {
+          process.stdout.write(`(uninstall skip: ${e.message.slice(0, 40)}) `);
+        }
+      }
       let res, attempt = 0;
       while (true) {
         res = await fetch(
