@@ -30,9 +30,16 @@ function buildWelcomeCard(): Partial<Activity> {
             { type: "TextBlock", wrap: true, text: "👋 สวัสดีครับ! ผม **BOB** ผู้ช่วย AI ของ Builk One Group" },
             { type: "TextBlock", wrap: true, text: "ถามเรื่องงานได้เลย ทั้ง **วันลา · สวัสดิการ · เบิกจ่าย · Product** ตอบให้ 24 ชม. ไม่ต้องเกรงใจครับ 😄" },
             { type: "TextBlock", wrap: true, weight: "Bolder", spacing: "Medium", text: "ลองพิมพ์ดูเลย เช่น 👇" },
-            { type: "TextBlock", wrap: true, text: "•  \"ลาพักร้อนได้กี่วัน?\"" },
-            { type: "TextBlock", wrap: true, text: "•  \"เบิกค่าทันตกรรมยังไง?\"" },
-            { type: "TextBlock", wrap: true, text: "•  \"Insite ทำอะไรได้บ้าง?\"" },
+            {
+              type: "TextBlock",
+              wrap: true,
+              spacing: "Small",
+              text:
+                "•  \"วันหยุดปีนี้เหลืออีกกี่วัน?\"\n" +
+                "•  \"ฉันลาอะไรได้บ้าง?\"\n" +
+                "•  \"เบิกค่าทันตกรรมยังไง?\"\n" +
+                "•  \"Insite ทำอะไรได้บ้าง?\"",
+            },
             { type: "TextBlock", wrap: true, isSubtle: true, size: "Small", spacing: "Medium", text: "เจอคำตอบถูก/ผิด กด 👍 / 👎 ใต้คำตอบ ช่วยผมพัฒนาได้ครับ" },
           ],
         },
