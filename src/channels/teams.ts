@@ -15,9 +15,13 @@ import { env } from "../env.js";
 
 // First message BOB sends when a user installs it (proactive first contact).
 const WELCOME_MESSAGE =
-  "👋 สวัสดีครับ! ผม BOB Sidekick ผู้ช่วย AI ของ Builk One Group พร้อมให้ทดลองใช้แล้ววันนี้ 🎉 " +
-  "ทักผมเป็นแชทส่วนตัวได้เลย ถามได้ทั้งเรื่อง HR (วันลา สวัสดิการ) และ Product " +
-  "เจอคำตอบถูก/ผิด กด 👍/👎 ใต้คำตอบช่วยผมพัฒนาได้เลยครับ";
+  "👋 สวัสดีครับ! ผม BOB ผู้ช่วย AI ของ Builk One Group — ถามเรื่องงานได้เลย " +
+  "ทั้งวันลา สวัสดิการ เบิกจ่าย หรือ Product ตอบให้ 24 ชม. ไม่ต้องเกรงใจครับ 😄\n" +
+  "ลองพิมพ์ดูเลย เช่น:\n" +
+  "• \"ลาพักร้อนได้กี่วัน?\"\n" +
+  "• \"เบิกค่าทันตกรรมยังไง?\"\n" +
+  "• \"Insite ทำอะไรได้บ้าง?\"\n" +
+  "เจอคำตอบถูก/ผิด กด 👍/👎 ช่วยผมพัฒนาได้ครับ";
 
 // Singleton adapter (re-used across warm Vercel invocations)
 let _adapter: BotFrameworkAdapter | null = null;
