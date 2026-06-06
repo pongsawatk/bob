@@ -22,7 +22,7 @@
 
 import { loadEnv } from "./_load-env.mjs";
 import { parseArgs } from "node:util";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { Redis } from "@upstash/redis";
 import botbuilder from "botbuilder";
 
@@ -40,6 +40,7 @@ const { values: args } = parseArgs({
     check:       { type: "boolean" }, // read-only: is BOB currently installed for these users? (--emails)
     force:       { type: "boolean" }, // with --provision: uninstall first, then reinstall (re-fires greet for already-installed users)
     emails:      { type: "string" },  // comma-separated emails to target (with --provision)
+    "emails-file": { type: "string" }, // path to a file/CSV; emails are auto-extracted
     "all-users": { type: "boolean" }, // target every enabled INTERNAL user in the org (with --provision)
     domain:      { type: "string" },  // restrict --all-users to this email domain (e.g., builk.com)
     exclude:     { type: "string" },  // comma-separated emails to skip
@@ -153,7 +154,22 @@ async function provisionUsers() {
 
   // Resolve the target list.
   let targets = [];
-  if (args.emails) {
+  if (args["emails-file"]) {
+    // Read a curated file/CSV; auto-extract each email (works regardless of name
+    // formatting). Graph accepts the UPN/email as the user key, so no id lookup.
+    const raw = readFileSync(args["emails-file"], "utf8");
+    const seen = new Set();
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
+      if (!m) continue;
+      const email = m[0];
+      if (seen.has(email.toLowerCase())) continue;
+      seen.add(email.toLowerCase());
+      const name = (line.split(",")[0] ?? email).replace(/^"|"$/g, "").trim();
+      targets.push({ id: email, userPrincipalName: email, displayName: name || email });
+    }
+    console.log(`• อ่านจากไฟล์ ${args["emails-file"]} → ${targets.length} อีเมล`);
+  } else if (args.emails) {
     const emails = args.emails.split(",").map((s) => s.trim()).filter(Boolean);
     process.stdout.write(`• Resolving ${emails.length} email(s)... `);
     for (const e of emails) {
