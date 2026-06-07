@@ -2,6 +2,7 @@ import { callLLM, type LLMResult, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { getHRBundle, getProductBundle } from "../kb/index.js";
 import { remainingHolidaysBlock } from "../kb/holidays.js";
+import { selectDocs, type SelectResult } from "../kb/select.js";
 import { env } from "../env.js";
 import type { Category } from "./router.js";
 
@@ -15,6 +16,8 @@ export interface DomainResult extends LLMResult {
   promptMs: number;
   /** Time assembling the KB bundle (getHRBundle/getProductBundle) — 0 for GENERAL. */
   kbMs: number;
+  /** KB retrieval stats (HR only) — how much of the bundle was sent this turn. */
+  kbSelect?: SelectResult;
 }
 
 const CLARIFY_RESPONSE =
@@ -53,14 +56,15 @@ export async function callDomainBot(
     const { text: template, version: promptVersion } = await getPrompt("hr");
     const promptMs = Date.now() - tPrompt;
     const tKb = Date.now();
-    const kb = await getHRBundle();
+    // Trim the bundle to the docs relevant to this question (see kb/select.ts).
+    const kbSelect = selectDocs(message, await getHRBundle());
     const kbMs = Date.now() - tKb;
     // Inject today's date PLUS a precomputed "remaining holidays" list so the model
     // reports it instead of doing (error-prone) date arithmetic. See kb/holidays.ts.
     const holidays = remainingHolidaysBlock();
     const dateBlock = holidays ? `${currentDateTH()}\n\n${holidays}` : currentDateTH();
     const systemPrompt = template
-      .replace("{{KB_BUNDLE}}", kb)
+      .replace("{{KB_BUNDLE}}", kbSelect.bundle)
       .replace("{{CURRENT_DATE}}", dateBlock);
 
     const result = await callLLM({
@@ -71,7 +75,7 @@ export async function callDomainBot(
       temperature: 0.3,
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
     });
-    return { ...result, category, model: env.MODEL_HR, promptVersion, promptMs, kbMs };
+    return { ...result, category, model: env.MODEL_HR, promptVersion, promptMs, kbMs, kbSelect };
   }
 
   if (category === "PRODUCT") {

@@ -115,7 +115,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
       total: botResult.usage.inputTokens + botResult.usage.outputTokens,
       totalCost: botResult.costUsd,
     },
-    metadata: { cacheReadTokens: botResult.usage.cacheReadTokens },
+    metadata: { cacheReadTokens: botResult.usage.cacheReadTokens, kbSelect: botResult.kbSelect },
   });
 
   const totalMs = Date.now() - t0;
@@ -145,6 +145,12 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
       inputTokens: botResult.usage.inputTokens,
       outputTokens: botResult.usage.outputTokens,
       cacheReadTokens: botResult.usage.cacheReadTokens,
+      kbSelect: botResult.kbSelect && {
+        mode: botResult.kbSelect.mode,
+        docs: `${botResult.kbSelect.selected}/${botResult.kbSelect.total}`,
+        chars: botResult.kbSelect.chars,
+        fullChars: botResult.kbSelect.fullChars,
+      },
       timings,
     },
     tags: [channel, routed.category, "llm"],
