@@ -1,6 +1,7 @@
 import { callLLM, type LLMResult, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { getHRBundle, getProductBundle } from "../kb/index.js";
+import { remainingHolidaysBlock } from "../kb/holidays.js";
 import { env } from "../env.js";
 import type { Category } from "./router.js";
 
@@ -54,9 +55,13 @@ export async function callDomainBot(
     const tKb = Date.now();
     const kb = await getHRBundle();
     const kbMs = Date.now() - tKb;
+    // Inject today's date PLUS a precomputed "remaining holidays" list so the model
+    // reports it instead of doing (error-prone) date arithmetic. See kb/holidays.ts.
+    const holidays = remainingHolidaysBlock();
+    const dateBlock = holidays ? `${currentDateTH()}\n\n${holidays}` : currentDateTH();
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
-      .replace("{{CURRENT_DATE}}", currentDateTH());
+      .replace("{{CURRENT_DATE}}", dateBlock);
 
     const result = await callLLM({
       model: env.MODEL_HR,
