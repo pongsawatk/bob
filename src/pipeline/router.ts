@@ -13,12 +13,16 @@ export interface RouterResult {
   model: string;
   promptVersion: string;
   latencyMs: number;
+  /** Time spent fetching the router prompt (getPrompt) — for latency-overhead profiling. */
+  promptMs: number;
   costUsd: number;
   usage: { inputTokens: number; outputTokens: number };
 }
 
 export async function routeMessage(message: string, history: LLMMessage[] = []): Promise<RouterResult> {
+  const tPrompt = Date.now();
   const { text: promptTemplate, version: promptVersion } = await getPrompt("router");
+  const promptMs = Date.now() - tPrompt;
   const systemPrompt = promptTemplate.replace("{{user_message}}", message);
 
   // Include recent conversation context so router understands follow-up questions
@@ -41,6 +45,7 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
     model: env.MODEL_ROUTER,
     promptVersion,
     latencyMs: result.latencyMs,
+    promptMs,
     costUsd: result.costUsd,
     usage: { inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens },
   };

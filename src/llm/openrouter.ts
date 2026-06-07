@@ -41,12 +41,15 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
 
   // For Anthropic models, cache the (large, stable) system prompt by sending it as a
   // content-block array with cache_control:ephemeral — OpenRouter passes this through
-  // to Anthropic. Cached input tokens are billed at 0.25x. For non-Anthropic models
-  // (Gemini) we send a plain string. ephemeral TTL is ~5 min, so the date in the
-  // prompt is stable within a cache window; HR (no per-user data) is shared across
-  // users, Product is shared across a user's multi-turn follow-ups.
+  // to Anthropic. Cached input tokens are billed at 0.1x read. For non-Anthropic models
+  // (Gemini) we send a plain string. We request the 1-hour TTL (ttl:"1h") instead of the
+  // default 5 min: at our sparse traffic (~13 turns/day, spread out) the 5-min window
+  // expires between turns, so most calls missed the cache and paid full input (HR bundle
+  // ~38K tok). 1h write costs 2x (vs 1.25x) but converts those misses into reads, which
+  // dominates the cost given HR = ~75% of spend. The date in the prompt is stable within
+  // an hour; HR (no per-user data) is shared across users, Product across follow-ups.
   const systemContent = cacheSystem
-    ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
+    ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }]
     : systemPrompt;
 
   const body = {
@@ -77,7 +80,6 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
     },
     { retries: 2, timeoutMs: 50_000 }
   );
-  const latencyMs = Date.now() - t0;
 
   if (!res.ok) {
     const text = await res.text();
@@ -95,6 +97,11 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
       cost?: number;
     };
   };
+  // Measure AFTER res.json(): fetch() resolves `res` when response *headers*
+  // arrive, but for these (non-streamed) LLM calls the body — i.e. the generated
+  // answer — keeps downloading after that. Timing at headers undercounted the real
+  // LLM round-trip by several seconds; reading the body first captures true latency.
+  const latencyMs = Date.now() - t0;
 
   const text = json.choices?.[0]?.message?.content ?? "";
   const u = json.usage ?? {};

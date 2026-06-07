@@ -10,6 +10,10 @@ export interface DomainResult extends LLMResult {
   model: string;
   /** Version of the prompt used ("v3"/"fallback", or "" if no LLM was called). */
   promptVersion: string;
+  /** Time fetching the domain prompt (getPrompt) — for latency-overhead profiling. */
+  promptMs: number;
+  /** Time assembling the KB bundle (getHRBundle/getProductBundle) — 0 for GENERAL. */
+  kbMs: number;
 }
 
 const CLARIFY_RESPONSE =
@@ -34,6 +38,8 @@ export async function callDomainBot(
       category,
       model: "",
       promptVersion: "",
+      promptMs: 0,
+      kbMs: 0,
       text: CLARIFY_RESPONSE,
       latencyMs: 0,
       costUsd: 0,
@@ -42,8 +48,12 @@ export async function callDomainBot(
   }
 
   if (category === "HR") {
+    const tPrompt = Date.now();
     const { text: template, version: promptVersion } = await getPrompt("hr");
+    const promptMs = Date.now() - tPrompt;
+    const tKb = Date.now();
     const kb = await getHRBundle();
+    const kbMs = Date.now() - tKb;
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
       .replace("{{CURRENT_DATE}}", currentDateTH());
@@ -56,12 +66,16 @@ export async function callDomainBot(
       temperature: 0.3,
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
     });
-    return { ...result, category, model: env.MODEL_HR, promptVersion };
+    return { ...result, category, model: env.MODEL_HR, promptVersion, promptMs, kbMs };
   }
 
   if (category === "PRODUCT") {
+    const tPrompt = Date.now();
     const { text: template, version: promptVersion } = await getPrompt("product");
+    const promptMs = Date.now() - tPrompt;
+    const tKb = Date.now();
     const kb = await getProductBundle();
+    const kbMs = Date.now() - tKb;
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)
       .replace("{{user_name}}", userName)
@@ -76,11 +90,13 @@ export async function callDomainBot(
       temperature: 0.5,
       cacheSystem: env.MODEL_PRODUCT.startsWith("anthropic/"),
     });
-    return { ...result, category, model: env.MODEL_PRODUCT, promptVersion };
+    return { ...result, category, model: env.MODEL_PRODUCT, promptVersion, promptMs, kbMs };
   }
 
   // GENERAL
+  const tPrompt = Date.now();
   const { text: template, version: promptVersion } = await getPrompt("general");
+  const promptMs = Date.now() - tPrompt;
   const systemPrompt = template.replace("{{user_message}}", "").trimEnd();
   const result = await callLLM({
     model: env.MODEL_GENERAL,
@@ -89,5 +105,5 @@ export async function callDomainBot(
     maxTokens: 800,
     temperature: 0.5,
   });
-  return { ...result, category, model: env.MODEL_GENERAL, promptVersion };
+  return { ...result, category, model: env.MODEL_GENERAL, promptVersion, promptMs, kbMs: 0 };
 }

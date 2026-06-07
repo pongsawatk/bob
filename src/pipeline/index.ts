@@ -31,10 +31,18 @@ export interface PipelineOutput {
   };
 }
 
+// Flips to true after this warm instance serves its first request. The first
+// request after a cold boot pays one-time costs (empty prompt/KB caches, first
+// Redis/Langfuse round-trips), so tagging coldStart lets us separate cold from
+// warm latency when profiling the pipeline overhead.
+let instanceWarmed = false;
+
 export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
   const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [] } = input;
   const traceId = crypto.randomUUID();
   const t0 = Date.now();
+  const coldStart = !instanceWarmed;
+  instanceWarmed = true;
 
   const trace = startTrace({ traceId, userId, sessionId, input: message });
   const baseMeta = { channel, department, userName };
@@ -47,7 +55,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   if (precacheHit) {
     trace.update({
       output: precacheHit.answer,
-      metadata: { ...baseMeta, category: precacheHit.category, fromCache: true },
+      metadata: { ...baseMeta, category: precacheHit.category, fromCache: true, coldStart },
       tags: [channel, precacheHit.category, "precache"],
     });
     await flushObs();
@@ -62,7 +70,11 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   }
 
   // ── Tier 1: Router ─────────────────────────────────────────────
+  const routeSpan = trace.span("route");
+  const tRoute = Date.now();
   const routed = await routeMessage(message, history);
+  const routeMs = Date.now() - tRoute;
+  routeSpan.end({ category: routed.category, promptMs: routed.promptMs, llmMs: routed.latencyMs });
   trace.generation({
     name: "router",
     model: routed.model,
@@ -80,7 +92,16 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   });
 
   // ── Tier 2-4: Domain Bot ───────────────────────────────────────
+  const domainSpan = trace.span("domain");
+  const tDomain = Date.now();
   const botResult = await callDomainBot(routed.category, message, userName, department, history);
+  const domainMs = Date.now() - tDomain;
+  domainSpan.end({
+    category: routed.category,
+    promptMs: botResult.promptMs,
+    kbMs: botResult.kbMs,
+    llmMs: botResult.latencyMs,
+  });
   trace.generation({
     name: `domain:${routed.category}`,
     model: botResult.model,
@@ -97,16 +118,34 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
     metadata: { cacheReadTokens: botResult.usage.cacheReadTokens },
   });
 
+  const totalMs = Date.now() - t0;
+  // Latency breakdown for overhead profiling. "overhead" = time NOT spent in the
+  // two LLM calls (router + domain fetch) = prompt fetch + KB assembly + glue.
+  const overheadMs = totalMs - routed.latencyMs - botResult.latencyMs;
+  const timings = {
+    coldStart,
+    totalMs,
+    overheadMs,
+    routeMs,
+    domainMs,
+    routerPromptMs: routed.promptMs,
+    routerLlmMs: routed.latencyMs,
+    domainPromptMs: botResult.promptMs,
+    domainKbMs: botResult.kbMs,
+    domainLlmMs: botResult.latencyMs,
+  };
+
   trace.update({
     output: botResult.text,
     metadata: {
       ...baseMeta,
       category: routed.category,
       confidence: routed.confidence,
-      latencyMs: Date.now() - t0,
+      latencyMs: totalMs,
       inputTokens: botResult.usage.inputTokens,
       outputTokens: botResult.usage.outputTokens,
       cacheReadTokens: botResult.usage.cacheReadTokens,
+      timings,
     },
     tags: [channel, routed.category, "llm"],
   });

@@ -39,7 +39,11 @@ function buildBody() {
     messages: [
       {
         role: "system",
-        content: [{ type: "text", text: BIG_SYSTEM, cache_control: { type: "ephemeral" } }],
+        // ttl:"1h" mirrors the production config (see openrouter.ts) — verifies the
+        // extended 1-hour cache tier passes through OpenRouter to Anthropic.
+        content: [
+          { type: "text", text: BIG_SYSTEM, cache_control: { type: "ephemeral", ttl: "1h" } },
+        ],
       },
       { role: "user", content: "ตอบกลับสั้นๆ คำเดียวว่า: พร้อม" },
     ],
