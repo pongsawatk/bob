@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "BOB Sidekick — Builk One Bot (v2: TypeScript service + Outline + Langfuse, deployed on Vercel)",
+  "description": "BOB Sidekick — Builk One Buddy (v2: TypeScript service + Outline + Langfuse, deployed on Vercel)",
   "engines": {
     "node": ">=20"
   },

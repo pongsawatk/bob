@@ -27,7 +27,7 @@ function buildWelcomeCard(): Partial<Activity> {
           type: "AdaptiveCard",
           version: "1.4",
           body: [
-            { type: "TextBlock", wrap: true, text: "👋 สวัสดีครับ! ผม **BOB** ผู้ช่วย AI ของ Builk One Group" },
+            { type: "TextBlock", wrap: true, text: "👋 สวัสดีครับ! ผม **BOB** (Builk One Buddy) ผู้ช่วย AI ของ Builk One Group" },
             { type: "TextBlock", wrap: true, text: "ถามเรื่องงานได้เลย ทั้ง **วันลา · สวัสดิการ · เบิกจ่าย · Product** ตอบให้ 24 ชม. ไม่ต้องเกรงใจครับ 😄" },
             { type: "TextBlock", wrap: true, weight: "Bolder", spacing: "Medium", text: "ลองพิมพ์ดูเลย เช่น 👇" },
             {
