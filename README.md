@@ -1,137 +1,102 @@
-# BOB Sidekick — Builk One Bot
+# BOB Sidekick — Builk One Buddy
 
-> Internal AI Knowledge Assistant for Builk One Group
-> Phase 0: Solo Sprint + AI Vibe Coding · Started 2026-05-08
+> Internal AI Knowledge Assistant for Builk One Group · answers HR / Process / Product
+> questions in **MS Teams** with citation-grounded answers, refusal rules for sensitive data,
+> and a feedback loop for continuous knowledge improvement.
 
-[![Status](https://img.shields.io/badge/status-Phase%200%20MVP-yellow)]() [![Channel](https://img.shields.io/badge/channel-MS%20Teams-blue)]() [![Stack](https://img.shields.io/badge/stack-n8n%20%2B%20Gemini%20%2B%20Claude-purple)]()
+[![Status](https://img.shields.io/badge/status-live%20org--wide-brightgreen)]() [![Channel](https://img.shields.io/badge/channel-MS%20Teams-blue)]() [![Stack](https://img.shields.io/badge/stack-Vercel%20%2B%20OpenRouter%20%2B%20Langfuse-purple)]()
+
+> 📌 **For current state, what's done, and what's planned → see [`docs/status.md`](docs/status.md).**
+> This README is the quick orientation; `status.md` is the living source of truth.
 
 ---
 
 ## What is this?
 
-BOB Sidekick (Builk One Bot) is an internal AI assistant that answers HR / Process / Product questions for Builk One Group employees through **MS Teams**, with citation-grounded answers, refusal rules for sensitive/volatile data, and a feedback loop that powers continuous knowledge improvement.
+BOB (**Builk One Buddy**) is an internal AI assistant for Builk One Group employees, reachable in
+**MS Teams**. It routes each question (HR / Product / General), retrieves the relevant knowledge,
+answers in Thai with source citations, refuses volatile/sensitive data (pricing, personal records),
+and logs every turn to Langfuse for monitoring + feedback.
 
-**Day 1 Goal:** Demo-ready MVP in 1 day → validate behavior → prove value before broader rollout.
+**Status:** 🟢 Live org-wide (rolled out 2026-06-06, 138 users). BOB is also the **reference
+template** for a fleet of internal bots.
 
 ## Architecture (1-pager)
 
 ```
-MS Teams (Azure Bot Framework)
-        ↓
-n8n Workflow A — Main Chat Handler
-        ↓
-Identity Adapter (Telegram | Teams | n8n test)
-        ↓
-Pre-AI Cache (Tier 0 — regex/FAQ)  → short-circuit if hit
-        ↓
-Router (OpenRouter · Gemini 2.5 Flash) → HR / PRODUCT / GENERAL / UNKNOWN
-        ↓
-Domain Bot:
-  HR        → OpenRouter · Claude Sonnet 4.6 (prompt caching)
-  Product   → Safe refusal template (until Product KB is published)
-  General   → OpenRouter · Gemini 2.5 Flash-Lite
-  Unknown   → Clarify template
-        ↓
-Normalize Response (contract: trace_id/category/answer/sources/...)
-        ↓
-Respond to User  +  Async Log to Google Sheet (error-safe)
+MS Teams ⇄ Azure Bot F0 (Single-Tenant) ⇄ Vercel /api/teams
+                                              │
+                        BOB Service (TypeScript, src/)
+                        channel → rate-limit → pipeline:
+                          precache → router → domainBot → normalize
+                              │            │            │
+                       Langfuse      Outline→Redis   Langfuse
+                       (prompts)     (knowledge)     (trace/cost/score)
+                              │
+                       OpenRouter (Gemini + Claude, 1 key, prompt caching)
 ```
 
-Async/Eval lane: Claude Haiku 4.5 (batch) for KB summarization + smoke test eval.
+**Golden rule:** edit knowledge in **Outline**, edit prompts in **Langfuse** — neither needs a deploy.
 
-## Repo Layout (Karpathy 3-layer)
+### Model lineup
+| Tier | Model |
+|---|---|
+| Router | `google/gemini-3.1-flash-lite` |
+| HR / Product | `anthropic/claude-sonnet-4-6` |
+| General | `google/gemini-3.1-flash-lite` |
+| Async / Eval | `deepseek/deepseek-v4-flash` |
+
+## Repo layout
 
 ```
 bob-sidekick/
-├── prompts/                # System prompts v0 (router, hr, product, general)
-├── knowledge-base/
-│   ├── raw/                # Immutable source — DO NOT EDIT
-│   ├── wiki/               # LLM-maintained articles
-│   ├── schema/
-│   │   ├── CLAUDE.md       # Generic AI maintainer convention
-│   │   └── BOB.md          # BOB-specific schema
-│   ├── index.md            # Content catalog
-│   └── log.md              # Append-only changelog
-├── workflows/              # n8n workflow JSON exports
-├── test-cases/             # Smoke test cases (JSONL)
-├── scripts/                # run-smoke.mjs + utilities
-├── apps-script/            # Google Apps Script log endpoint
-└── docs/                   # Demo script, handoff package
+├── api/                     # Vercel entrypoints (chat.ts, teams.ts)
+├── src/
+│   ├── channels/            # teams, conversation refs, history, rate limit
+│   ├── pipeline/            # precache, router, domainBot, normalize
+│   ├── kb/                  # outline, cache, local, select (per-question retrieval), holidays
+│   ├── prompts/             # langfusePrompts (pull from Langfuse + fallback)
+│   ├── llm/                 # openrouter (cache_control)
+│   ├── obs/                 # langfuse (trace/score), alert
+│   └── store/               # redis (Upstash)
+├── prompts/fallback/        # offline-safety copies of Langfuse prompts
+├── knowledge-base/wiki/     # local KB fallback (hr/, process/)
+├── test-cases/              # eval + smoke JSONL
+├── scripts/                 # refresh-kb, run-eval, analyze-*, send-proactive, ...
+├── docs/                    # status.md (live), migration-plan-v2.md (rationale)
+└── _archive/                # deprecated n8n/Notion-era artifacts
 ```
 
-## Quickstart (Day 1)
+## Local dev
 
 ### Prerequisites
-- n8n self-hosted v2.17.2+
-- OpenRouter API key (`OPENROUTER_API_KEY`)
-- Google Sheet for logging
-- Node.js 20+ for smoke tests
+- Node.js 20+
+- `.env` with: `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_HOST`,
+  `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, `OUTLINE_API_TOKEN`/`OUTLINE_BASE_URL`/`OUTLINE_COLLECTION_IDS`,
+  `AZURE_BOT_ID`/`AZURE_BOT_SECRET`/`AZURE_TENANT_ID`, `KB_ADMIN_EMAILS` (see `.env.example`)
 
-### Setup
+### Common commands
+```bash
+npm run check                 # connectivity check for all services
+npm run refresh-kb            # sync Outline → Redis knowledge bundles
+npx tsx scripts/run-eval.mjs --baseline test-results/eval-baseline.jsonl   # regression eval
+node scripts/analyze-langfuse.mjs [days]   # latency / cost / token / cache analysis
+```
 
-1. **Knowledge Base** — open Notion DB [BOB Knowledge Base](https://www.notion.so/f8768020d1a54f668efbd757d99b6ae9) and add HR + Product entries (status=published)
+### Deploy
+**git push → `main` only** (Vercel auto-deploys the Git-integrated project).
+Do **not** use `vercel --prod` — the local CLI is linked to the wrong project (no env vars).
 
-2. **Apps Script log endpoint**
-   ```
-   - Open apps-script/log-endpoint.gs in script.google.com
-   - Replace SHEET_ID with your sheet
-   - Run setupSheets() once
-   - Deploy → Web App → copy URL
-   ```
-
-3. **Import n8n Workflow**
-   ```
-   - n8n → Workflows → Import from File
-   - Run: cd scripts && npm run build:kb && npm run build:workflow:openrouter
-   - Upload workflows/workflow-a-main-chat-handler-openrouter.json
-   - Set env: OPENROUTER_API_KEY = your OpenRouter API key
-   - Set env: SHEETS_LOG_WEB_APP_URL = Apps Script web app URL
-   - Activate workflow
-   ```
-
-4. **Smoke Test**
-   ```bash
-   cd scripts
-   export BOB_WEBHOOK_URL="https://your-n8n/webhook/bob-chat"
-   node run-smoke.mjs
-   ```
-   Day 1 pass = ≥80% pass rate, 0 critical fail.
-
-5. **Teams Sideload** (parallel — ระหว่างรอ IT)
-   ```
-   - Azure Bot Framework registration
-   - Point messaging endpoint → n8n webhook URL
-   - Build Teams app manifest → sideload as personal app
-   - Test ใน Teams ของ Jor
-   ```
-
-## Cost Guardrails
-
-- Billing alert: **2,000 บาท/สัปดาห์** at Gemini + Anthropic (per Solo Sprint Plan)
-- OpenRouter Anthropic Prompt Caching `cache_control: ephemeral` on Sonnet 4.6 HR/Process lane
-- Pre-AI Cache (Tier 0) regex pre-filter → cuts 30% traffic before LLM
-- Token caps per lane (Router=10, HR=1k, General=800, Product=2k)
-
-## Critical Rules (encoded in prompts + smoke test)
+## Critical rules (encoded in prompts + eval)
 
 1. **No HR/Finance hallucination** — refuse if no source
-2. **No fake product pricing/promo** — T3 volatile = always refuse + route Sales
+2. **No fake product pricing/promo** — volatile data = refuse + route Sales
 3. **No bypass approval** — sensitive/finance = route owner
 4. **Resist prompt injection** — yield to system prompt, never reveal internals
-5. **Cite every fact** — `[source: raw/...]` mandatory in wiki
-6. **Trace everything** — every request = trace_id + Sheet row
-
-## Related Notion Docs
-
-- [1-Day AI Build Playbook](https://www.notion.so/41eac7f89df94d1d8b8ceac686bb0f73) — execution cockpit
-- [BOB Sprint Run Log](https://www.notion.so/454eea66a32345d59d7f9cf4ea3971f5) — daily decisions/defects
-- [BOB Eval Cases — Smoke Test](https://www.notion.so/0a975eac3b4542358893605039f1ca6b) — 20 test cases
-- [BOB Knowledge Base DB](https://www.notion.so/f8768020d1a54f668efbd757d99b6ae9) — KB authoring UI
-- [SDD](https://www.notion.so/33546733f68081389678d5688c55ce41) — architecture
-- [n8n Workflow Spec](https://www.notion.so/33546733f6808133ab79d77bf8188837) — workflow A–F
-- [KB Management Guide](https://www.notion.so/33546733f6808175ae6ff0f83f627008) — Champion guide
-- [Solo Sprint Plan](https://www.notion.so/dddc4dd84a3a49029b4a1716c4cbcc12) — engagement playbook
+5. **Cite every fact** — answers carry Outline source URLs
+6. **Trace everything** — every turn = a Langfuse trace (cost/model/user/score)
 
 ## Owner
 
 Jor / Pongsawat K. — Head of Contech BU, PM
+</content>
