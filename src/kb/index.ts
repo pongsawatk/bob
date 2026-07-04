@@ -61,6 +61,19 @@ export async function refreshKB(): Promise<RefreshResult> {
     process: countBlocks(bundles.process),
     product: countBlocks(bundles.product),
   };
+
+  // Never overwrite a good KB with an empty one. A silent-empty fetch happens
+  // when the Outline API token can't see a configured collection (Outline
+  // filters inaccessible docs instead of erroring) — incident 2026-07-05:
+  // /refresh wiped the HR bundle because the prod token had no HR Shared access.
+  if (counts.hr + counts.process === 0 || counts.product === 0) {
+    throw new Error(
+      `refreshKB: got empty bundle (hr=${counts.hr}, process=${counts.process}, product=${counts.product}) — ` +
+        `refusing to overwrite. Check that OUTLINE_API_TOKEN can read every collection in ` +
+        `OUTLINE_COLLECTION_IDS / OUTLINE_HR_COLLECTION_IDS.`
+    );
+  }
+
   const meta: KbMeta = { refreshedAt: new Date().toISOString(), counts };
 
   await writeBundlesToRedis(bundles, meta);
