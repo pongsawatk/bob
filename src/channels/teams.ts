@@ -64,7 +64,9 @@ async function resolveEmail(ctx: TurnContext, aadId: string): Promise<string> {
   } catch (err) {
     console.error("resolveEmail: getMember failed:", err);
   }
-  emailCache.set(aadId, email);
+  // Cache only successful lookups: a transient getMember failure must not pin
+  // "" for the rest of this warm instance (breaks admin checks + Langfuse user id).
+  if (email) emailCache.set(aadId, email);
   return email;
 }
 
@@ -145,13 +147,8 @@ function isClearCommand(message: string): boolean {
 
 async function handleRefreshCommand(ctx: TurnContext): Promise<void> {
   // Resolve the sender's real email — activity.from only carries an AAD object id.
-  let email = "";
-  try {
-    const member = await TeamsInfo.getMember(ctx, ctx.activity.from.id);
-    email = (member.email ?? member.userPrincipalName ?? "").toLowerCase();
-  } catch (err) {
-    console.error("Teams /refresh: getMember failed:", err);
-  }
+  const aadId = ctx.activity.from.aadObjectId ?? ctx.activity.from.id ?? "unknown";
+  const email = await resolveEmail(ctx, aadId);
 
   if (!email || !adminEmails().includes(email)) {
     console.warn(`Teams /refresh denied for "${email || "unknown"}"`);

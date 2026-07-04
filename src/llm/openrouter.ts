@@ -104,6 +104,9 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
   const latencyMs = Date.now() - t0;
 
   const text = json.choices?.[0]?.message?.content ?? "";
+  // An empty completion used to flow through and reach Teams as a blank card.
+  // Fail loudly instead: onTurnError sends a proper apology + fires the alert webhook.
+  if (!text.trim()) throw new Error(`OpenRouter returned empty content (model ${model})`);
   const u = json.usage ?? {};
   const details = u.prompt_tokens_details ?? {};
 

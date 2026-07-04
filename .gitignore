@@ -14,6 +14,9 @@ service-account*.json
 test-results/
 *.log
 
+# Throwaway analysis scripts/data (one-off Langfuse Q&A pulls)
+scripts/tmp-*
+
 # Node
 node_modules/
 npm-debug.log*

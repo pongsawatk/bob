@@ -32,6 +32,13 @@ export const env = {
   OUTLINE_BASE_URL:       opt("OUTLINE_BASE_URL", "https://outline.builk.id"),
   OUTLINE_API_TOKEN:      opt("OUTLINE_API_TOKEN"),
   OUTLINE_COLLECTION_IDS: opt("OUTLINE_COLLECTION_IDS"),
+  // Collections whose ENTIRE content is HR-side knowledge (e.g. "HR Shared").
+  // When set, HR/Process content comes from here exclusively; hr/process docs in
+  // OUTLINE_COLLECTION_IDS are skipped so stale duplicates can't creep in.
+  OUTLINE_HR_COLLECTION_IDS: opt("OUTLINE_HR_COLLECTION_IDS"),
+
+  // Shared secret for POST /api/chat (test endpoint). Unset = endpoint disabled.
+  CHAT_TEST_KEY: opt("CHAT_TEST_KEY"),
 
   // KB admin — emails allowed to run /refresh in Teams (comma-separated)
   KB_ADMIN_EMAILS: opt("KB_ADMIN_EMAILS"),

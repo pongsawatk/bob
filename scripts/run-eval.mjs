@@ -63,13 +63,22 @@ async function judge(tc, answer, attempt = 1) {
     `เกณฑ์การประเมิน:\n${tc.judge}\n\n` +
     `ให้คะแนน 1-5 (5=ตรงคำถาม ถูกต้อง grounded ตามเกณฑ์; 3=พอใช้/ไม่ครบ; 1=ผิด/มั่ว/ไม่ตรงคำถาม). ` +
     `ตอบ JSON เท่านั้น (บรรทัดเดียว): {"score": <1-5>, "reason": "<สั้นๆ ไทย>"}`;
-  const r = await callLLM({
-    model: args["judge-model"],
-    systemPrompt: sys,
-    messages: [{ role: "user", content: user }],
-    maxTokens: 800, // headroom in case the judge model emits reasoning before the JSON
-    temperature: 0,
-  });
+  let r;
+  try {
+    r = await callLLM({
+      model: args["judge-model"],
+      systemPrompt: sys,
+      messages: [{ role: "user", content: user }],
+      maxTokens: 800, // headroom in case the judge model emits reasoning before the JSON
+      temperature: 0,
+    });
+  } catch (err) {
+    // callLLM throws on empty content (guards blank cards in Teams) — but for the
+    // judge an empty completion is routine (deepseek sometimes burns all tokens on
+    // reasoning). Retry once, then fall back to rules-only, same as garbled JSON.
+    if (attempt < 2) return judge(tc, answer, attempt + 1);
+    return { score: null, reason: `judge unavailable: ${String(err).slice(0, 80)}` };
+  }
   const match = r.text.match(/\{[\s\S]*\}/); // grab the JSON object even if prefixed by reasoning
   if (match) {
     try {

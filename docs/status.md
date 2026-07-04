@@ -1,7 +1,7 @@
 # BOB Sidekick — Project Status & Roadmap
 
 > **Single source of truth** ว่าโปรเจกต์ทำอะไรไปแล้ว กำลังทำอะไร และจะทำอะไรต่อ
-> อัปเดตล่าสุด: **2026-06-12** · เจ้าของ: Jor / Pongsawat K. (Head of Contech BU, PM)
+> อัปเดตล่าสุด: **2026-07-04** · เจ้าของ: Jor / Pongsawat K. (Head of Contech BU, PM)
 >
 > เอกสารนี้สรุปจากบันทึกการทำงานสะสม. รายละเอียดเชิงลึก/บทเรียนเฉพาะเรื่องอยู่ใน
 > Notion (ลิงก์ท้ายไฟล์) และ commit history. เหตุผลเชิงสถาปัตยกรรมดู
@@ -88,7 +88,10 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
   ⚠️ **deploy ผ่าน git push เท่านั้น** — CLI ในเครื่อง link ผิด project (`prj_ddv…` ไม่มี env)
 - **Azure Bot / App ID:** `06f1e303-e8d2-4bd2-8b8a-d4fff49d7c18` · Tenant `dbb514a1-e97b-4b50-be5f-c00508b9ad5a`
 - **Subscription:** `Bot-Platform` (MCA ของ Kittisak), RG `rg-bob`
-- **Outline collection "BOB Knowledge Base":** `dab98231-5cc8-4805-9dcd-7e447a292398`
+- **Outline collection "BOB Knowledge Base":** `dab98231-5cc8-4805-9dcd-7e447a292398` (ฝั่ง Product)
+- **Outline collection "HR Shared":** `47de7bb9-7fe8-4d48-98eb-4e577e94e442` (ฝั่ง HR/Process — HR ดูแลเอง;
+  5 หมวด: Benefits / Announcement / HR / Policy / Process) → ตั้ง env `OUTLINE_HR_COLLECTION_IDS`
+- **`/api/chat` (test endpoint):** ต้องส่ง header `x-test-key` = env `CHAT_TEST_KEY` (ไม่ตั้ง env = ปิด)
 - **Langfuse project:** `bob-sidekick` (cloud.langfuse.com)
 - **KB admin (`/refresh`):** pongsawat@builk.com, bhoomchai@builk.com
 
@@ -130,6 +133,25 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - precompute วันหยุดที่เหลือ (`src/kb/holidays.ts`) inject เข้า HR prompt
 - latency profiling (แก้ measurement bug: จับเวลาหลัง `res.json()`)
 
+### Refactor + HR Shared migration (2026-07-04)
+- **KB ฝั่ง HR ย้าย source ไป Outline "HR Shared"** (`src/kb/outline.ts` + env `OUTLINE_HR_COLLECTION_IDS`)
+  — ทุก doc ใน collection → HR side (หมวด "Process — …" → process bundle), title line ติดป้ายหมวด
+  `## [Benefits — สวัสดิการ] …` ช่วย retrieval + citation. เมื่อ set env นี้ hr/process ใน BOB KB เดิม
+  จะถูกข้าม (กัน duplicate stale). ทดสอบจริง: HR 23 + Process 12 blocks (~49.5K chars).
+- **PII guard:** เอกสาร "Employee Directory / ทะเบียนพนักงาน" ใน collection ถูก exclude จาก bundle เสมอ
+- **แก้บั๊ก SEP collision** — doc ที่มีเส้น `---` ในเนื้อหาเคยถูก split เป็น block ปลอมไร้ header/citation
+  (กระทบ prod อยู่: Product 15→9 blocks) → แปลง `---` เป็น `***` ตอน assemble
+- **precache วันหยุดคงเหลือ** (`precache.ts`) — "วันหยุดเหลือกี่วัน" ตอบ deterministic จาก `holidays.ts`
+  ไม่เรียก LLM (คำถามแนะนำ #1 ~27% traffic); guard เข้ม: วันลา/รายเดือน/เทศกาล → LLM ตามเดิม
+  + greeting/thanks จับคำลงท้าย (สวัสดีครับ/ขอบคุณค่ะ)
+- **ปิดช่องโหว่ `/api/chat`** — เดิมเปิด public ไม่มี auth (ใครก็เผา OpenRouter credit ได้)
+  → ต้องส่ง `x-test-key` ตรงกับ env `CHAT_TEST_KEY`; ไม่ตั้ง env = 401 ทุกกรณี
+- **แก้บั๊ก emailCache** จำค่าว่างถาวรเมื่อ `getMember` ล้มชั่วคราว (ทำ admin check + Langfuse user เพี้ยน)
+  + `/refresh` ใช้ `resolveEmail` ร่วมกัน (ตัดโค้ดซ้ำ)
+- **guard คำตอบว่างจาก OpenRouter** — เดิมการ์ดเปล่าหลุดถึง user เงียบ ๆ → โยน error ให้ onTurnError + alert
+- **router fallback รู้จัก Kwanjai/ขวัญใจ** ใน PRODUCT (⚠️ ต้อง sync Langfuse router prompt ด้วย)
+- `.gitignore` เพิ่ม `scripts/tmp-*` (ไฟล์วิเคราะห์ชั่วคราว)
+
 ### Quality / Eval
 - **eval regression guard** — `test-cases/bob-eval-hr.jsonl` (31 เคสจากคำถามจริง)
   + `scripts/run-eval.mjs` (rule-based + deepseek judge, โหมด `--baseline`)
@@ -140,6 +162,12 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 
 ## 6. 🔄 กำลังทำ / เฝ้าดู
 
+- **Repo audit 2026-06-27:** `npm run typecheck` และ `npm run build` ผ่าน. `main` ยัง ahead `origin/main` 2 commits
+  และมีไฟล์วิเคราะห์ Langfuse/Q&A แบบ untracked ใน `scripts/tmp-*`, `scripts/tmp-qa-data.json`,
+  `scripts/tmp-qa-review.txt`, `scripts/analyze-qa.mjs` (ยังไม่ stage/commit).
+- **Markdown audit 2026-06-27:** ค้นแบบ `-Force` แล้วไม่พบ `.md` ซ่อนนอกชุดที่อ่านแล้ว. `.claude/` มีแค่
+  `settings.local.json`; `_archive/docs/*` และ `_archive/kb-schema/*` เป็นเอกสาร Claude/AI pairing ยุคเก่า
+  (n8n + Notion KB + Sheets) ให้อ่านเป็นประวัติ/บทเรียน ไม่ใช่ runbook ปัจจุบัน.
 - **เก็บ latency breakdown production** (timings/spans ใน trace) ต่ออีก 1–2 วันเพื่อยืนยันผล
 - **Langfuse scoring** — เหลือตั้ง Score Config + Human Annotation (ช่วงเบต้า) ก่อนทำ LLM-as-judge
 - ตอบ feedback 👍/👎 ภายใน 24 ชม. (commitment ช่วง beta)
@@ -151,9 +179,8 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 ### Latency / Cost — คอขวดย้ายไป output tokens แล้ว
 จากการวัดรอบ 2 (169 เทิร์น): retrieval ลด input จริง แต่ p50 ลดแค่ 13.3s→12.5s
 เพราะ **คอขวดตอนนี้ = ความยาวคำตอบ** (p50 427 tok, broad 1,000 tok ชนเพดาน).
-- **[Quick win] precache คำถามแนะนำ 3 ข้อ** จาก proactive greeting — "วันหยุดเหลือกี่วัน" /
-  "ลาอะไรได้บ้าง" / "เบิกทันตกรรม" ≈ **27% ของ traffic** แต่ precache hit จริงแค่ 2%
-  (คำตอบ deterministic ได้ — วันหยุดมี precompute แล้ว)
+- ~~[Quick win] precache คำถามแนะนำ~~ → **ทำแล้ว 2026-07-04** สำหรับ "วันหยุดเหลือกี่วัน"
+  (ข้อเดียวที่ deterministic ได้). "ลาอะไรได้บ้าง"/"เบิกทันตกรรม" ต้องการ KB nuance — ยังไป LLM.
 - **คุมความยาวคำตอบ** (คำตอบโดนตัดกลางประโยค 15 เทิร์น/สัปดาห์: HR ชน 1000 ×13, Product ชน 2000 ×2)
 - ทดลอง **Haiku 4.5** กับ HR retrieved mode (ต้องผ่าน eval 31 เคสก่อน)
 - cron warm-ping ลด cold start (43% ของ HR turns, overhead ~0.8s)
@@ -162,6 +189,8 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - **router ไม่รู้จัก Kwanjai/ขวัญใจ** ใน PRODUCT → misroute ไป HR ตอบ "ไม่มีข้อมูล" ทั้งที่ KB มี
 - **GENERAL/Gemini แต่งข้อมูลตัว BOB** (เช่น อ้างช่วย IT, รับปากเรียนรู้จากผู้ใช้) → เพิ่ม BOB fact sheet
   ใน general prompt. หมายเหตุ: ชื่อ "Builk One Buddy" = **ชื่อทางการแล้ว** (ใส่ใน prompt/welcome ตั้งแต่ 2026-06-12)
+- **Kwanjai fix 2026-07-04:** `router.txt` (fallback) ใส่ `Kwanjai/ขวัญใจ` ใน PRODUCT แล้ว —
+  **เหลือ sync Langfuse router prompt** (New version + label `production`) ให้ตรงกัน.
 - date arithmetic นอก precompute ยังพลาด (บอกวันในสัปดาห์ผิด)
 - UNKNOWN ใช้ข้อความก้อนเดียวทั้ง injection + คำถามสุจริต → ดูไม่เป็นมิตร
 - Teams `<quoted messageId>` ยังไม่ถูก resolve
@@ -203,6 +232,13 @@ rollback = ย้าย label `production` กลับ version เก่า.
 
 ### แก้ความรู้
 แก้ใน Outline → พิมพ์ `/refresh` ใน Teams (admin) หรือ `npm run refresh-kb`.
+- **ฝั่ง HR/Process:** แก้ใน collection **"HR Shared"** (HR ดูแลเอง; หมวดบนสุดเป็นตัวกำหนด:
+  "Process — …" → process, ที่เหลือ → hr). เอกสารชื่อ "Employee Directory/ทะเบียนพนักงาน"
+  จะถูกกันออกจาก bundle อัตโนมัติ (PII guard).
+- **ฝั่ง Product:** แก้ใน "BOB Knowledge Base" เหมือนเดิม (top-level `Product — …`).
+- **เปิดใช้ HR Shared:** ตั้ง env `OUTLINE_HR_COLLECTION_IDS=47de7bb9-7fe8-4d48-98eb-4e577e94e442`
+  (Vercel + `.env`) → ตรวจว่า OUTLINE_API_TOKEN อ่าน collection นี้ได้ → รัน eval → `/refresh`.
+  ไม่ตั้ง env = พฤติกรรมเดิม 100%.
 
 ### Deploy
 **git push → main เท่านั้น** (auto-deploy Vercel). อย่าใช้ `vercel --prod` (link ผิด project).
@@ -239,13 +275,17 @@ field: `latency` เป็น **วินาที** (×1000), cost = `calculate
 - **Teams proactive:** dedupe ด้วย `conversation.id`; admin-preinstall = uninstall ผ่าน Graph ไม่ได้
 - **Prompt caching:** OpenRouter รองรับ Anthropic caching จริง — ส่ง system เป็น content-block array
   + `cache_control:{type:"ephemeral", ttl:"1h"}`
+- **Legacy Claude docs:** `_archive/kb-schema/CLAUDE.md` / `BOB.md` ยังมีหลักการที่ควรรักษา
+  (ห้ามเดา, claim ต้องมี source, T3/T4 เช่น price/promo/status ต้อง route ไป owner/API, audit trail)
+  แต่ workflow เก่าเรื่อง Notion DB → wiki → n8n/Sheets ถูกแทนด้วย Outline → Redis + Langfuse แล้ว.
 
 ---
 
 ## 11. Related docs & Notion
 
 - [`migration-plan-v2.md`](./migration-plan-v2.md) — เหตุผลเชิงสถาปัตยกรรม (ทำไมเลิก n8n)
-- `_archive/docs/` — เอกสารยุค Phase-0 (n8n/Notion/Sheets) เก็บไว้อ้างอิงประวัติ
+- `_archive/docs/` — เอกสารยุค Phase-0 (n8n/Notion/Sheets) เก็บไว้อ้างอิงประวัติ; อย่าใช้เป็น checklist ปัจจุบัน
+- `_archive/kb-schema/CLAUDE.md` และ `BOB.md` — convention เก่าของ AI maintainer; ใช้เฉพาะหลักการ citation/refusal/volatility
 - Notion "BOB Usage, Performance & Cost — Langfuse" (`37846733f6808190ba87c00896059653`)
 - Notion "วิเคราะห์การใช้งานจริง 5–11 มิ.ย. 2026" (`37c46733f68081e1973ad157a3c782d9`)
 - Notion "BOB Sprint Run Log" (`454eea66a32345d59d7f9cf4ea3971f5`)

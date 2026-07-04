@@ -1,7 +1,15 @@
 // Phase 2: Pull knowledge from Outline and assemble per-domain bundles.
-// The "BOB Knowledge Base" collection holds top-level parent docs
-// (HR — …, Process — …, Product — …); every descendant is grouped under
-// the domain of its top-level ancestor.
+// Two source modes, combinable:
+//  • OUTLINE_COLLECTION_IDS ("BOB Knowledge Base"): top-level parent docs
+//    (HR — …, Process — …, Product — …); every descendant is grouped under
+//    the domain of its top-level ancestor.
+//  • OUTLINE_HR_COLLECTION_IDS ("HR Shared", HR-owned): EVERY doc is HR-side.
+//    Top-level docs are category containers (Benefits / Announcement / HR /
+//    Policy / Process); "Process — …" maps to the process bundle, the rest to
+//    hr. The category title is kept in each block header so retrieval
+//    (kb/select.ts title scoring) and citations see it.
+//    When HR collections are set, hr/process docs in OUTLINE_COLLECTION_IDS
+//    are skipped — HR Shared becomes the single source of truth for HR.
 
 import { env } from "../env.js";
 import { fetchRetry } from "../http/fetchRetry.js";
@@ -62,14 +70,29 @@ async function fetchCollectionDocs(collectionId: string): Promise<OutlineDoc[]> 
   return out;
 }
 
+// PII guard: people-directory docs live in HR-owned collections but must NEVER
+// enter the shared KB bundle (they'd ride into every user's prompt — see the
+// personalization plan: directory is a separate lookup keyed by the asker's email).
+const EXCLUDE_TITLES = /employee\s*directory|ทะเบียนพนักงาน/i;
+
+const splitIds = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
+
 /** Fetch all configured collections and assemble HR/Process/Product bundles. */
 export async function fetchOutlineBundles(): Promise<Bundles> {
-  const ids = env.OUTLINE_COLLECTION_IDS.split(",").map((s) => s.trim()).filter(Boolean);
-  if (!ids.length) throw new Error("OUTLINE_COLLECTION_IDS is empty — set it to the BOB KB collection id");
+  const generalIds = splitIds(env.OUTLINE_COLLECTION_IDS);
+  const hrIds = splitIds(env.OUTLINE_HR_COLLECTION_IDS);
+  if (!generalIds.length && !hrIds.length)
+    throw new Error("OUTLINE_COLLECTION_IDS / OUTLINE_HR_COLLECTION_IDS are empty — set at least one collection id");
 
   const base = env.OUTLINE_BASE_URL.replace(/\/$/, "");
-  const all: OutlineDoc[] = [];
-  for (const id of ids) all.push(...(await fetchCollectionDocs(id)));
+  // HR-side content comes exclusively from the HR collections when configured.
+  const hrMode = hrIds.length > 0;
+
+  const all: Array<OutlineDoc & { fromHrCollection: boolean }> = [];
+  for (const id of generalIds)
+    all.push(...(await fetchCollectionDocs(id)).map((d) => ({ ...d, fromHrCollection: false })));
+  for (const id of hrIds)
+    all.push(...(await fetchCollectionDocs(id)).map((d) => ({ ...d, fromHrCollection: true })));
 
   const byId = new Map(all.map((d) => [d.id, d]));
 
@@ -95,11 +118,36 @@ export async function fetchOutlineBundles(): Promise<Bundles> {
   all.sort((a, b) => a.title.localeCompare(b.title, "th"));
 
   for (const d of all) {
-    const dom = domainOf(topTitle(d));
+    const top = topTitle(d);
+    // Docs may contain "---" horizontal rules, which collide with SEP and would
+    // shatter one doc into headerless pseudo-blocks (no title, no แหล่งอ้างอิง —
+    // breaks countBlocks and per-question retrieval). Swap them for "***", the
+    // equivalent markdown rule that can't collide.
+    const body = (d.text ?? "").trim().replace(/\n\s*---+\s*\n/g, "\n\n***\n\n");
+
+    let dom: keyof Bundles | null;
+    let titleLine: string;
+    if (d.fromHrCollection) {
+      if (EXCLUDE_TITLES.test(d.title)) {
+        console.warn(`KB: excluded "${d.title}" from bundle (people directory / PII guard)`);
+        continue;
+      }
+      // Category containers themselves carry no content — skip empty bodies.
+      if (!body) continue;
+      dom = /^process\b/i.test(top) ? "process" : "hr";
+      // Keep the category visible in the title line (helps select.ts title scoring
+      // for questions like "สวัสดิการ…" and gives the model grouping context).
+      titleLine = top !== d.title ? `## [${top}] ${d.title}` : `## ${d.title}`;
+    } else {
+      dom = domainOf(top);
+      // HR Shared owns hr/process when configured — drop stale duplicates here.
+      if (dom && dom !== "product" && hrMode) continue;
+      titleLine = `## ${d.title}`;
+    }
     if (!dom) continue;
-    const body = (d.text ?? "").trim();
+
     // Header carries the Outline source URL so the model can cite it (see prompt rule).
-    const header = d.url ? `## ${d.title}\nแหล่งอ้างอิง: ${base}${d.url}` : `## ${d.title}`;
+    const header = d.url ? `${titleLine}\nแหล่งอ้างอิง: ${base}${d.url}` : titleLine;
     parts[dom].push(body ? `${header}\n${body}` : header);
   }
 
