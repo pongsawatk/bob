@@ -56,4 +56,12 @@ export const env = {
   DIRECTORY_DRIVE_ID: opt("DIRECTORY_DRIVE_ID", "b!j5OGcMdRmUq8VQ9PWIC9spNpR9RGjhlKnsPFB1cSKKeH48GAO-SlQZJmWh4xycG6"),
   DIRECTORY_ITEM_ID:  opt("DIRECTORY_ITEM_ID", "013ZJ64W5L7I52V7DWWFGYWRPOIX6HTBUU"),
   DIRECTORY_SHEET:    opt("DIRECTORY_SHEET", "ทะเบียนพนักงาน"),
+
+  // Proactive broadcast (announce new features to all staff).
+  // The cron endpoint only sends when BROADCAST_CAMPAIGN is set to a campaign id
+  // that has a prebuilt roster — this is the "arming" switch. Leave empty = no-op.
+  BROADCAST_CAMPAIGN: opt("BROADCAST_CAMPAIGN"),
+  // Shared secret the Vercel cron sends as `Authorization: Bearer <CRON_SECRET>`.
+  // Endpoint refuses to run without a match (nobody can trigger a mass DM by URL).
+  CRON_SECRET: opt("CRON_SECRET"),
 } as const;

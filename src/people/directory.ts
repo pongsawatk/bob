@@ -29,6 +29,7 @@ export interface Profile {
 }
 
 const REDIS_KEY = "bob:directory";
+const RESIGNED_KEY = "bob:directory:resigned";
 const MEM_TTL_MS = 60_000;
 
 let mem: { map: Record<string, Profile>; at: number } | null = null;
@@ -37,7 +38,7 @@ let mem: { map: Record<string, Profile>; at: number } | null = null;
 
 let tok: { value: string; expiresAt: number } | null = null;
 
-async function graphToken(): Promise<string> {
+export async function graphToken(): Promise<string> {
   if (tok && Date.now() < tok.expiresAt - 300_000) return tok.value;
   const body = new URLSearchParams({
     client_id: env.AZURE_BOT_ID,
@@ -85,13 +86,20 @@ function parseThaiDate(v: unknown): string | undefined {
 
 const clean = (v: unknown): string => String(v ?? "").trim();
 
+export interface ParsedDirectory {
+  active: Record<string, Profile>;
+  /** Emails listed below the "พนักงานลาออก" divider — ex-staff. */
+  resigned: string[];
+}
+
 /** Parse usedRange rows: locate the header row by its "Email" cell (the sheet
  *  has a title row above it), then map each data row to a Profile.
  *
- *  The sheet keeps RESIGNED staff below an "พนักงานลาออก" divider row (followed
- *  by a repeated header). We must stop at that divider — those rows still carry
- *  emails, so without this cut BOB would greet ex-employees as current staff. */
-export function parseRows(rows: unknown[][]): Record<string, Profile> {
+ *  The sheet keeps RESIGNED staff below an "พนักงานลาออก" divider (with a repeated
+ *  header). Those rows still carry emails, so we split them out: `active` never
+ *  includes ex-staff (BOB won't greet them as current), and `resigned` is exported
+ *  so the broadcast can exclude them even when their AAD display name isn't tagged. */
+export function parseRows(rows: unknown[][]): ParsedDirectory {
   const headerIdx = rows.findIndex((r) => r.some((c) => /^\s*email\s*$/i.test(String(c ?? ""))));
   if (headerIdx === -1) throw new Error("directory: header row with 'Email' column not found");
   const header = (rows[headerIdx] ?? []).map((c) => clean(c));
@@ -112,13 +120,17 @@ export function parseRows(rows: unknown[][]): Record<string, Profile> {
   const iSup = col(/supervisor/i);
   const iEmpType = col(/สถานะการจ้าง|employment/i); // future column (asked from HR)
 
-  const map: Record<string, Profile> = {};
+  const active: Record<string, Profile> = {};
+  const resigned: string[] = [];
+  let inResigned = false;
   for (const r of rows.slice(headerIdx + 1)) {
-    // Everything from the "พนักงานลาออก" (resigned) divider down is ex-staff — stop.
-    if (r.some((c) => /ลาออก/.test(String(c ?? "")))) break;
+    // The divider flips us into the resigned section; the repeated header row
+    // right after it has no email so it's skipped naturally.
+    if (r.some((c) => /ลาออก/.test(String(c ?? "")))) { inResigned = true; continue; }
     const email = clean(r[iEmail]).toLowerCase();
-    if (!email.includes("@")) continue; // trailing/blank rows
-    const p: Profile = {
+    if (!email.includes("@")) continue; // trailing/blank/section-header rows
+    if (inResigned) { resigned.push(email); continue; }
+    active[email] = {
       email,
       fullNameTh: [clean(r[iFirstTh]), clean(r[iLastTh])].filter(Boolean).join(" "),
       fullNameEn: [clean(r[iFirstEn]), clean(r[iLastEn])].filter(Boolean).join(" ") || undefined,
@@ -132,9 +144,8 @@ export function parseRows(rows: unknown[][]): Record<string, Profile> {
       supervisor: clean(r[iSup]) || undefined,
       employmentType: iEmpType >= 0 ? clean(r[iEmpType]) || undefined : undefined,
     };
-    map[email] = p;
   }
-  return map;
+  return { active, resigned };
 }
 
 // ── Refresh path (Graph → Redis) ───────────────────────────────────────
@@ -157,17 +168,27 @@ export async function refreshDirectory(): Promise<DirectoryRefreshResult> {
   );
   if (!res.ok) throw new Error(`Graph usedRange HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const j = (await res.json()) as { values?: unknown[][] };
-  const map = parseRows(j.values ?? []);
+  const { active, resigned } = parseRows(j.values ?? []);
 
-  const people = Object.keys(map).length;
+  const people = Object.keys(active).length;
   // Same safety rule as refreshKB: never replace a good directory with an empty one.
   if (people === 0) throw new Error("refreshDirectory: parsed 0 people — refusing to overwrite");
 
   const r = getRedis();
   if (!r) throw new Error("Upstash Redis is not configured");
-  await r.set(REDIS_KEY, map);
-  mem = { map, at: Date.now() };
+  await r.set(REDIS_KEY, active);
+  await r.set(RESIGNED_KEY, resigned);
+  mem = { map: active, at: Date.now() };
   return { people, refreshedAt: new Date().toISOString() };
+}
+
+/** Emails in the sheet's "พนักงานลาออก" section — for excluding ex-staff from
+ *  broadcasts even when their AAD display name isn't tagged [Resign]. */
+export async function getResignedEmails(): Promise<Set<string>> {
+  const r = getRedis();
+  if (!r) return new Set();
+  const list = (await r.get<string[]>(RESIGNED_KEY)) ?? [];
+  return new Set(list.map((e) => e.toLowerCase()));
 }
 
 // ── Request path (memory → Redis; never Graph) ─────────────────────────

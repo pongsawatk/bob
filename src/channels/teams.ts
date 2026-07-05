@@ -118,6 +118,25 @@ function adminEmails(): string[] {
   return env.KB_ADMIN_EMAILS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 }
 
+// One-time self-introduction. Returns a greeting line the FIRST time BOB can
+// identify someone (set-once via Redis), else undefined. The launch broadcast
+// pre-sets bob:introduced:{email} for its cohort, so only people added to the HR
+// registry afterwards get this. Fail-open: any Redis hiccup → no intro (never a
+// duplicate risk, just a missed nicety).
+async function claimIntro(email: string, nickname?: string): Promise<string | undefined> {
+  const r = getRedis();
+  if (!r) return undefined;
+  try {
+    const first = await r.set(`bob:introduced:${email}`, 1, { nx: true });
+    if (first === null) return undefined;
+  } catch (err) {
+    console.error("claimIntro: redis failed:", err);
+    return undefined;
+  }
+  const who = nickname ? `คุณ${nickname}` : "คุณ";
+  return `อ้อ ตอนนี้ผมรู้จัก${who}แล้วนะครับ (ข้อมูลจากทะเบียนที่ทีม HR ดูแล) 😊`;
+}
+
 // Show "BOB is typing…" while the pipeline runs. Teams clears the indicator
 // after a few seconds, so we refresh it on a cancellable timer until we reply.
 // Returns a stop() that clears the next scheduled send.
@@ -286,9 +305,16 @@ export async function handleTeamsRequest(
       // Personalization: the asker's own profile only. Any failure (guest,
       // email not in the registry, Redis down) just means no profile block.
       let profileBlock: string | undefined;
+      let introLine: string | undefined;
       try {
         const profile = email ? await lookupProfile(email) : null;
-        if (profile) profileBlock = renderProfileBlock(profile);
+        if (profile) {
+          profileBlock = renderProfileBlock(profile);
+          // First time we can identify this person (and they didn't already get
+          // the launch broadcast) → say so once, so people added to the HR
+          // registry after launch still hear the "I know you now" story.
+          introLine = await claimIntro(email, profile.nickname);
+        }
       } catch (err) {
         console.error("lookupProfile failed (continuing without profile):", err);
       }
@@ -300,6 +326,7 @@ export async function handleTeamsRequest(
 
       await appendHistory(convId, message, output.answer);
 
+      if (introLine) output.answer = `${introLine}\n\n${output.answer}`;
       const reply = buildAdaptiveCard(output);
       await ctx.sendActivity(reply);
     } finally {

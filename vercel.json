@@ -7,5 +7,8 @@
       "maxDuration": 60,
       "includeFiles": "knowledge-base/wiki/**,prompts/fallback/**"
     }
-  }
+  },
+  "crons": [
+    { "path": "/api/broadcast", "schedule": "0 3 * * *" }
+  ]
 }
