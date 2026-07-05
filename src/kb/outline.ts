@@ -118,6 +118,12 @@ export async function fetchOutlineBundles(): Promise<Bundles> {
   all.sort((a, b) => a.title.localeCompare(b.title, "th"));
 
   for (const d of all) {
+    // PII guard applies to EVERY collection — a people directory pasted anywhere
+    // must never ride into the shared prompt bundle.
+    if (EXCLUDE_TITLES.test(d.title)) {
+      console.warn(`KB: excluded "${d.title}" from bundle (people directory / PII guard)`);
+      continue;
+    }
     const top = topTitle(d);
     // Docs may contain "---" horizontal rules, which collide with SEP and would
     // shatter one doc into headerless pseudo-blocks (no title, no แหล่งอ้างอิง —
@@ -128,10 +134,6 @@ export async function fetchOutlineBundles(): Promise<Bundles> {
     let dom: keyof Bundles | null;
     let titleLine: string;
     if (d.fromHrCollection) {
-      if (EXCLUDE_TITLES.test(d.title)) {
-        console.warn(`KB: excluded "${d.title}" from bundle (people directory / PII guard)`);
-        continue;
-      }
       // Category containers themselves carry no content — skip empty bodies.
       if (!body) continue;
       dom = /^process\b/i.test(top) ? "process" : "hr";
