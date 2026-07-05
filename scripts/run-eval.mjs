@@ -29,7 +29,7 @@ const { runPipeline } = await import("../src/pipeline/index.ts");
 const { callLLM } = await import("../src/llm/openrouter.ts");
 const { remainingHolidaysBlock } = await import("../src/kb/holidays.ts");
 
-const REFUSAL = /ขออภัย|ไม่มีข้อมูล|ยังไม่มี|ไม่ได้มีข้อมูล|เข้าไม่ถึง|ไม่มีสิทธิ์เข้าถึง|HumanSoft|ติดต่อ\s*(HR|Sales|Finance|IT|ทีม|Pre-?sales|Product|ผู้บริหาร)|แนะนำให้.*(ถาม|ติดต่อ|ปรึกษา)/i;
+const REFUSAL = /ขออภัย|ไม่มีข้อมูล|ยังไม่มี|ไม่ได้มีข้อมูล|ไม่สามารถให้|เข้าไม่ถึง|ไม่มีสิทธิ์เข้าถึง|HumanSoft|(ติดต่อ|พูดคุยกับ|คุยกับ)\s*(HR|Sales|Finance|IT|ทีม|Pre-?sales|Product|ผู้บริหาร|หัวหน้า)|แนะนำให้.*(ถาม|ติดต่อ|ปรึกษา|พูดคุย)/i;
 
 function expectedHolidayCount() {
   const m = remainingHolidaysBlock().match(/ทั้งหมด (\d+) วัน/);
