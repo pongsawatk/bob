@@ -196,12 +196,21 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - Teams `<quoted messageId>` ยังไม่ถูก resolve
 - **เพิ่ม 9 injection patterns** (จาก user ที่ตั้งใจทดสอบ) เข้า eval set
 
-### Employee personalization (แผนใหญ่ — ดู [`migration-plan-v2`] + memory)
-ให้ BOB รู้จักพนักงานจาก email แล้วปรับคำตอบ. หลักการสำคัญ:
-- **directory แยกจาก KB bundle** (กัน PII รั่ว / token บาน / cache แตก)
-- **อย่าพังแคช Anthropic** — แยก system เป็น 2 block (KB ใหญ่+นิ่ง cache, profile เล็ก+ราย user ไม่ cache)
-- กัน PII (ห้ามเปิดเผยข้อมูลพนักงานคนอื่น), profile ของผู้ถามคนเดียว
-- ปลดล็อก **pain #1: "วันลาคงเหลือกี่วัน"** (เจอ ~10 ครั้ง/สัปดาห์, ตอบไม่ได้ทุกครั้ง) → ต้องเชื่อม HumanSoft API
+### Employee personalization — ✅ shipped 2026-07-05
+BOB รู้จักพนักงานจาก email แล้ว (ทัก "คุณจ้อ", รู้ตำแหน่ง/ทีม/อายุงาน/หัวหน้า):
+- `src/people/directory.ts` — Graph workbook API อ่าน "BOG ทะเบียนพนักงาน For All.xlsx"
+  (SharePoint, HR ดูแล) → parse 273 คน → Redis `bob:directory` + mem TTL 60s.
+  **refresh path เท่านั้นที่แตะ Graph** (มากับ `/refresh`, non-fatal ต่อ KB refresh)
+- Graph auth = App Registration เดิมของบอท (`Sites.Read.All` Application + admin consent ✅ 2026-07-05)
+- **2-block system content** (`openrouter.ts userContext`): KB block cache ตามเดิม,
+  profile block เล็ก (~100 tok) ไม่ cache — แคชแชร์ข้ามผู้ใช้ไม่แตก
+- ฉีด profile ทั้ง HR / PRODUCT / GENERAL (GENERAL ด้วย เพราะ "คุณรู้จักผมไหม" route ไปที่นั่น)
+- PII: block มีกฎห้ามเปิดเผยข้อมูลคนอื่น + eval case `PII-other-person` + directory doc
+  ใน Outline ถูกกันออกจาก KB bundle (`EXCLUDE_TITLES`)
+- date quirk: วันเริ่มงานมาเป็น Excel serial (ไม่ใช่ text) + ปี พ.ศ. → แปลงสองชั้นใน `parseThaiDate`
+- ค้าง: HR เพิ่มคอลัมน์ **สถานะการจ้าง/ผลิตภัณฑ์ที่ดูแล** (โค้ด map รอไว้แล้ว: `iEmpType`);
+  **pain #1 "วันลาคงเหลือ"** ยังต้อง HumanSoft API (เฟสถัดไป); ควรอัปเดต Langfuse hr prompt
+  rule 6 (อายุงานตอนนี้ตอบจาก profile ได้ ไม่ต้อง redirect HumanSoft แล้ว)
 
 ### Phase 4 — Decommission ของเก่า (นอก repo)
 ปิด n8n Workflow A, Apps Script/Sheets logging, Notion KB DB เมื่อมั่นใจ BOB แทนครบ.

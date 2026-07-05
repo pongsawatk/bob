@@ -5,6 +5,7 @@ import { ActivityTypes, BotFrameworkAdapter, TeamsInfo, TurnContext, type Activi
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runPipeline, type PipelineOutput } from "../pipeline/index.js";
 import { refreshKB } from "../kb/index.js";
+import { lookupProfile, renderProfileBlock, refreshDirectory } from "../people/directory.js";
 import { scoreTrace } from "../obs/langfuse.js";
 import { getHistory, appendHistory, clearHistory } from "./history.js";
 import { saveConvRef } from "./convref.js";
@@ -159,11 +160,23 @@ async function handleRefreshCommand(ctx: TurnContext): Promise<void> {
   await ctx.sendActivity("กำลังอัปเดตความรู้จาก Outline... ⏳");
   try {
     const r = await refreshKB();
+    // Directory refresh rides along but must not fail the KB refresh — the
+    // profile feature degrades gracefully (BOB just doesn't greet by nickname).
+    let dirLine = "";
+    try {
+      const d = await refreshDirectory();
+      dirLine = `\n• Directory: ${d.people} คน`;
+    } catch (err) {
+      console.error("Teams /refresh: refreshDirectory failed:", err);
+      await alertError("/refresh directory", err);
+      dirLine = "\n• Directory: อัปเดตไม่สำเร็จ (ใช้ข้อมูลชุดเดิม)";
+    }
     await ctx.sendActivity(
       `อัปเดตความรู้เรียบร้อยครับ ✅\n` +
         `• HR: ${r.counts.hr} เอกสาร\n` +
         `• Process: ${r.counts.process} เอกสาร\n` +
-        `• Product: ${r.counts.product} เอกสาร`
+        `• Product: ${r.counts.product} เอกสาร` +
+        dirLine
     );
   } catch (err) {
     console.error("Teams /refresh: refreshKB failed:", err);
@@ -267,12 +280,23 @@ export async function handleTeamsRequest(
     const stopTyping = startTyping(ctx);
     try {
       const userName = activity.from.name ?? "คุณ";
-      const userId = (await resolveEmail(ctx, aadId)) || aadId;
+      const email = await resolveEmail(ctx, aadId);
+      const userId = email || aadId;
+
+      // Personalization: the asker's own profile only. Any failure (guest,
+      // email not in the registry, Redis down) just means no profile block.
+      let profileBlock: string | undefined;
+      try {
+        const profile = email ? await lookupProfile(email) : null;
+        if (profile) profileBlock = renderProfileBlock(profile);
+      } catch (err) {
+        console.error("lookupProfile failed (continuing without profile):", err);
+      }
 
       const convId = activity.conversation?.id ?? userId;
       const history = await getHistory(convId);
 
-      const output = await runPipeline({ message, userId, userName, history, sessionId: convId, channel: "teams" });
+      const output = await runPipeline({ message, userId, userName, history, sessionId: convId, channel: "teams", profileBlock });
 
       await appendHistory(convId, message, output.answer);
 

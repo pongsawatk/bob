@@ -50,4 +50,10 @@ export const env = {
   AZURE_BOT_ID:     opt("AZURE_BOT_ID"),
   AZURE_BOT_SECRET: opt("AZURE_BOT_SECRET"),
   AZURE_TENANT_ID:  opt("AZURE_TENANT_ID"),
+
+  // Employee directory (SharePoint xlsx via Graph — auth reuses the bot app).
+  // Defaults point at "BOG ทะเบียนพนักงาน For All.xlsx" (BUILK > Shared Documents > HR).
+  DIRECTORY_DRIVE_ID: opt("DIRECTORY_DRIVE_ID", "b!j5OGcMdRmUq8VQ9PWIC9spNpR9RGjhlKnsPFB1cSKKeH48GAO-SlQZJmWh4xycG6"),
+  DIRECTORY_ITEM_ID:  opt("DIRECTORY_ITEM_ID", "013ZJ64W5L7I52V7DWWFGYWRPOIX6HTBUU"),
+  DIRECTORY_SHEET:    opt("DIRECTORY_SHEET", "ทะเบียนพนักงาน"),
 } as const;

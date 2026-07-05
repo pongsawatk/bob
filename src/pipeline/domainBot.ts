@@ -35,7 +35,8 @@ export async function callDomainBot(
   message: string,
   userName = "คุณ",
   department = "",
-  history: LLMMessage[] = []
+  history: LLMMessage[] = [],
+  profileBlock?: string
 ): Promise<DomainResult> {
   if (category === "UNKNOWN") {
     return {
@@ -76,6 +77,7 @@ export async function callDomainBot(
       maxTokens: 1300,
       temperature: 0.3,
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
+      userContext: profileBlock,
     });
     return { ...result, category, model: env.MODEL_HR, promptVersion, promptMs, kbMs, kbSelect };
   }
@@ -100,6 +102,7 @@ export async function callDomainBot(
       maxTokens: 2000,
       temperature: 0.5,
       cacheSystem: env.MODEL_PRODUCT.startsWith("anthropic/"),
+      userContext: profileBlock,
     });
     return { ...result, category, model: env.MODEL_PRODUCT, promptVersion, promptMs, kbMs };
   }
@@ -109,12 +112,15 @@ export async function callDomainBot(
   const { text: template, version: promptVersion } = await getPrompt("general");
   const promptMs = Date.now() - tPrompt;
   const systemPrompt = template.replace("{{user_message}}", "").trimEnd();
+  // GENERAL gets the profile too — "คุณรู้จักผมไหม" routes here, and identity
+  // questions answered with "ไม่รู้จักคุณ" undercut the whole feature.
   const result = await callLLM({
     model: env.MODEL_GENERAL,
     systemPrompt,
     messages: [...history, { role: "user", content: message }],
     maxTokens: 800,
     temperature: 0.5,
+    userContext: profileBlock,
   });
   return { ...result, category, model: env.MODEL_GENERAL, promptVersion, promptMs, kbMs: 0 };
 }

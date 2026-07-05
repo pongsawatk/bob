@@ -14,6 +14,12 @@ export interface LLMCallOptions {
   temperature?: number;
   /** แนบ cache_control: ephemeral บน system prompt (ใช้กับ Anthropic models) */
   cacheSystem?: boolean;
+  /**
+   * Per-user context (e.g. the asker's profile) appended as a SEPARATE system
+   * block AFTER the cached one. Never gets cache_control — a per-user prefix
+   * inside the cached block would break the shared cache for everyone.
+   */
+  userContext?: string;
 }
 
 export interface LLMResult {
@@ -37,6 +43,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
     maxTokens = 1000,
     temperature = 0.3,
     cacheSystem = false,
+    userContext,
   } = opts;
 
   // For Anthropic models, cache the (large, stable) system prompt by sending it as a
@@ -49,8 +56,13 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
   // dominates the cost given HR = ~75% of spend. The date in the prompt is stable within
   // an hour; HR (no per-user data) is shared across users, Product across follow-ups.
   const systemContent = cacheSystem
-    ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } }]
-    : systemPrompt;
+    ? [
+        { type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } },
+        // Per-user block: uncached tail (~100 tok) — the big KB prefix above
+        // still shares its cache across all users.
+        ...(userContext ? [{ type: "text", text: userContext }] : []),
+      ]
+    : [systemPrompt, userContext].filter(Boolean).join("\n\n");
 
   const body = {
     model,

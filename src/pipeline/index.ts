@@ -16,6 +16,11 @@ export interface PipelineInput {
   /** Conversation id — used as the Langfuse session id to group turns. */
   sessionId?: string;
   history?: LLMMessage[];
+  /**
+   * Rendered profile block of the ASKER only (see people/directory.ts) —
+   * injected as an uncached system block. Never contains other employees.
+   */
+  profileBlock?: string;
 }
 
 export interface PipelineOutput {
@@ -38,7 +43,7 @@ export interface PipelineOutput {
 let instanceWarmed = false;
 
 export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
-  const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [] } = input;
+  const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [], profileBlock } = input;
   const traceId = crypto.randomUUID();
   const t0 = Date.now();
   const coldStart = !instanceWarmed;
@@ -94,7 +99,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   // ── Tier 2-4: Domain Bot ───────────────────────────────────────
   const domainSpan = trace.span("domain");
   const tDomain = Date.now();
-  const botResult = await callDomainBot(routed.category, message, userName, department, history);
+  const botResult = await callDomainBot(routed.category, message, userName, department, history, profileBlock);
   const domainMs = Date.now() - tDomain;
   domainSpan.end({
     category: routed.category,
@@ -141,6 +146,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
       ...baseMeta,
       category: routed.category,
       confidence: routed.confidence,
+      // Flag only — never the profile content (keeps PII out of Langfuse).
+      hasProfile: !!profileBlock,
       latencyMs: totalMs,
       inputTokens: botResult.usage.inputTokens,
       outputTokens: botResult.usage.outputTokens,
