@@ -71,7 +71,9 @@ export async function callDomainBot(
       model: env.MODEL_HR,
       systemPrompt,
       messages: [...history, { role: "user", content: message }],
-      maxTokens: 1000,
+      // 1300, not 1000: enumerate answers ("สวัสดิการมีอะไรบ้าง") hit the old cap
+      // mid-sentence ~13×/week. Prompt length rules still target 80-150 words.
+      maxTokens: 1300,
       temperature: 0.3,
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
     });
