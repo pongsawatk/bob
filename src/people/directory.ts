@@ -86,7 +86,11 @@ function parseThaiDate(v: unknown): string | undefined {
 const clean = (v: unknown): string => String(v ?? "").trim();
 
 /** Parse usedRange rows: locate the header row by its "Email" cell (the sheet
- *  has a title row above it), then map each data row to a Profile. */
+ *  has a title row above it), then map each data row to a Profile.
+ *
+ *  The sheet keeps RESIGNED staff below an "พนักงานลาออก" divider row (followed
+ *  by a repeated header). We must stop at that divider — those rows still carry
+ *  emails, so without this cut BOB would greet ex-employees as current staff. */
 export function parseRows(rows: unknown[][]): Record<string, Profile> {
   const headerIdx = rows.findIndex((r) => r.some((c) => /^\s*email\s*$/i.test(String(c ?? ""))));
   if (headerIdx === -1) throw new Error("directory: header row with 'Email' column not found");
@@ -110,6 +114,8 @@ export function parseRows(rows: unknown[][]): Record<string, Profile> {
 
   const map: Record<string, Profile> = {};
   for (const r of rows.slice(headerIdx + 1)) {
+    // Everything from the "พนักงานลาออก" (resigned) divider down is ex-staff — stop.
+    if (r.some((c) => /ลาออก/.test(String(c ?? "")))) break;
     const email = clean(r[iEmail]).toLowerCase();
     if (!email.includes("@")) continue; // trailing/blank rows
     const p: Profile = {
