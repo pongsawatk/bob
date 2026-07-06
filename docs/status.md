@@ -69,14 +69,17 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 
 **n8n** = เก็บไว้ทำ automation ที่ไม่ใช่ AI core เท่านั้น (ไม่เอา pipeline ไปวาดใน n8n).
 
-### Model lineup (finalized)
+### Model lineup (อัปเดต 2026-07-05 — HR/Product → Sonnet 5)
 | Tier | Model |
 |---|---|
 | Router | `google/gemini-3.1-flash-lite` |
-| HR | `anthropic/claude-sonnet-4-6` |
-| Product | `anthropic/claude-sonnet-4-6` |
+| HR | `anthropic/claude-sonnet-5` (env `MODEL_HR`; default โค้ด = 4-6) |
+| Product | `anthropic/claude-sonnet-5` (env `MODEL_PRODUCT`) |
 | General | `google/gemini-3.1-flash-lite` |
 | Async / Eval (judge) | `deepseek/deepseek-v4-flash` |
+
+> Sonnet 5 ใหม่กว่า+ถูกกว่า ~40%/call (eval 31/32 ผ่าน). สลับผ่าน env, rollback = ลบ env.
+> `maxTokens` HR = 1300 (จาก 1000) แก้คำตอบตัดกลางประโยค.
 
 ---
 
@@ -195,6 +198,18 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - UNKNOWN ใช้ข้อความก้อนเดียวทั้ง injection + คำถามสุจริต → ดูไม่เป็นมิตร
 - Teams `<quoted messageId>` ยังไม่ถูก resolve
 - **เพิ่ม 9 injection patterns** (จาก user ที่ตั้งใจทดสอบ) เข้า eval set
+
+### Feature broadcast — โค้ด shipped 2026-07-05 (ยังไม่ arm ส่งจริง)
+ประกาศฟีเจอร์ให้พนักงานทุกคน ทักชื่อเล่นรายคน (การประกาศ = สาธิตฟีเจอร์ "รู้จักคุณ"):
+- `src/channels/broadcast.ts` + `api/broadcast.ts` (cron endpoint) + `scripts/broadcast.ts` (CLI)
+- Vercel cron ทุกวัน 10:00 ICT แต่ส่งจริงเฉพาะเมื่อ arm ด้วย env `BROADCAST_CAMPAIGN` + `CRON_SECRET`
+- idempotent รายคน (SETNX), ตัดคนลาออก/service/ระบุตัวไม่ได้, 2 variant (matched/fallback)
+- self-intro flag `bob:introduced:{email}` — คนที่ HR เพิ่มเข้าทะเบียนทีหลังได้ยิน "รู้จักคุณแล้ว" ครั้งแรก
+- **dry-run: 143 คนจะได้รับ (130 personalized + 13 fallback), ตัด 20.** CSV ให้ HR ตรวจ:
+  `test-results/broadcast-roster-launch-2026-07.csv`
+- **ขั้น arm ส่งจริง:** ส่ง CSV ให้ HR → ตั้ง env `CRON_SECRET`+`BROADCAST_CAMPAIGN=launch-2026-07` → redeploy →
+  ส่ง 10:00 วันถัดไป (หรือรัน `scripts/broadcast.ts --send` เดี๋ยวนั้น) → หลังเสร็จ clear env
+- ค้าง: analyzer วัดผล week-2 retention (ทำหลังส่ง). ดู memory [[project-broadcast]]
 
 ### Employee personalization — ✅ shipped 2026-07-05
 BOB รู้จักพนักงานจาก email แล้ว (ทัก "คุณจ้อ", รู้ตำแหน่ง/ทีม/อายุงาน/หัวหน้า):
