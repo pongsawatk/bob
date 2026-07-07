@@ -199,17 +199,19 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - Teams `<quoted messageId>` ยังไม่ถูก resolve
 - **เพิ่ม 9 injection patterns** (จาก user ที่ตั้งใจทดสอบ) เข้า eval set
 
-### Feature broadcast — โค้ด shipped 2026-07-05 (ยังไม่ arm ส่งจริง)
+### Feature broadcast — 🚀 ARMED 2026-07-07 → ส่งจริงพุธ 2026-07-08 08:00 ICT
 ประกาศฟีเจอร์ให้พนักงานทุกคน ทักชื่อเล่นรายคน (การประกาศ = สาธิตฟีเจอร์ "รู้จักคุณ"):
 - `src/channels/broadcast.ts` + `api/broadcast.ts` (cron endpoint) + `scripts/broadcast.ts` (CLI)
-- Vercel cron ทุกวัน 10:00 ICT แต่ส่งจริงเฉพาะเมื่อ arm ด้วย env `BROADCAST_CAMPAIGN` + `CRON_SECRET`
+- Vercel cron ทุกวัน 01:00 UTC = **08:00 ICT** (เปลี่ยนจาก 10:00 ตามแผนส่ง 8 ก.ค.)
 - idempotent รายคน (SETNX), ตัดคนลาออก/service/ระบุตัวไม่ได้, 2 variant (matched/fallback)
 - self-intro flag `bob:introduced:{email}` — คนที่ HR เพิ่มเข้าทะเบียนทีหลังได้ยิน "รู้จักคุณแล้ว" ครั้งแรก
-- **dry-run: 143 คนจะได้รับ (130 personalized + 13 fallback), ตัด 20.** CSV ให้ HR ตรวจ:
-  `test-results/broadcast-roster-launch-2026-07.csv`
-- **ขั้น arm ส่งจริง:** ส่ง CSV ให้ HR → ตั้ง env `CRON_SECRET`+`BROADCAST_CAMPAIGN=launch-2026-07` → redeploy →
-  ส่ง 10:00 วันถัดไป (หรือรัน `scripts/broadcast.ts --send` เดี๋ยวนั้น) → หลังเสร็จ clear env
-- ค้าง: analyzer วัดผล week-2 retention (ทำหลังส่ง). ดู memory [[project-broadcast]]
+- **7 ก.ค.:** HR confirm ชื่อเล่นแล้ว · refresh directory (132 active + 142 resigned — ตัวเลข 273 เดิม
+  คือก่อน fix แยกคนลาออก) · rebuild roster = **144 คน (131 personalized + 13 fallback), ตัด 20** ·
+  self-test ส่งจริงหา pongsawat ทั้ง 2 variant ✅ · arm env `CRON_SECRET`+`BROADCAST_CAMPAIGN=launch-2026-07`
+  บน Vercel project **"bob"** (relink CLI จาก "bob-sidekick" ตัวหลอกแล้ว)
+- **baseline ก่อนส่ง (14 วัน, ตัด eval):** ผู้ใช้จริง ~13 คน / ~40 ข้อความ, 50% ใช้ครั้งเดียวแล้วหาย
+- **หลังส่ง (8 ก.ค.):** ตรวจผล cron (sent/failed) → **clear `BROADCAST_CAMPAIGN` ทันที** → analyzer week-2 retention
+- ดู memory [[project-broadcast]]
 
 ### Employee personalization — ✅ shipped 2026-07-05
 BOB รู้จักพนักงานจาก email แล้ว (ทัก "คุณจ้อ", รู้ตำแหน่ง/ทีม/อายุงาน/หัวหน้า):

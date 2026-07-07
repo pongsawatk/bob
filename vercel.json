@@ -9,6 +9,6 @@
     }
   },
   "crons": [
-    { "path": "/api/broadcast", "schedule": "0 3 * * *" }
+    { "path": "/api/broadcast", "schedule": "0 1 * * *" }
   ]
 }
