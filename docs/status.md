@@ -199,7 +199,7 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - Teams `<quoted messageId>` ยังไม่ถูก resolve
 - **เพิ่ม 9 injection patterns** (จาก user ที่ตั้งใจทดสอบ) เข้า eval set
 
-### Feature broadcast — 🚀 ARMED 2026-07-07 → ส่งจริงพุธ 2026-07-08 08:00 ICT
+### Feature broadcast — ✅ ส่งแล้ว 2026-07-08 ~10:00 ICT · 144/144 สำเร็จ · disarmed แล้ว
 ประกาศฟีเจอร์ให้พนักงานทุกคน ทักชื่อเล่นรายคน (การประกาศ = สาธิตฟีเจอร์ "รู้จักคุณ"):
 - `src/channels/broadcast.ts` + `api/broadcast.ts` (cron endpoint) + `scripts/broadcast.ts` (CLI)
 - Vercel cron ทุกวัน 01:00 UTC = **08:00 ICT** (เปลี่ยนจาก 10:00 ตามแผนส่ง 8 ก.ค.)
@@ -210,8 +210,12 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
   self-test ส่งจริงหา pongsawat ทั้ง 2 variant ✅ · arm env `CRON_SECRET`+`BROADCAST_CAMPAIGN=launch-2026-07`
   บน Vercel project **"bob"** (relink CLI จาก "bob-sidekick" ตัวหลอกแล้ว)
 - **baseline ก่อนส่ง (14 วัน, ตัด eval):** ผู้ใช้จริง ~13 คน / ~40 ข้อความ, 50% ใช้ครั้งเดียวแล้วหาย
-- **หลังส่ง (8 ก.ค.):** ตรวจผล cron (sent/failed) → **clear `BROADCAST_CAMPAIGN` ทันที** → analyzer week-2 retention
-- ดู memory [[project-broadcast]]
+- **8 ก.ค. ส่งจริง:** cron 08:00 ไม่ยิงเพราะ deploy คืนก่อน **Error — CRON_SECRET มี CRLF ปน**
+  (PowerShell pipe `"..." | vercel env add` ทิ้ง `\r` ไว้ → Vercel reject build; `BROADCAST_CAMPAIGN` ก็ปนด้วย)
+  → ส่งผ่าน CLI `scripts/broadcast.ts --send` แทน ~10:00 ICT = **144 ส่งสำเร็จ, 0 fail**
+  → ลบ env ทั้งคู่, ใส่ `CRON_SECRET` ใหม่แบบสะอาดด้วย bash `printf '%s'` (**บทเรียน: ห้ามตั้ง env ผ่าน
+  PowerShell pipe**), `BROADCAST_CAMPAIGN` ไม่ใส่กลับ = cron เป็น no-op ตามเดิม
+- **ค้าง:** analyzer week-2 retention (baseline อยู่ด้านบน; วัดช่วง 15-22 ก.ค.). ดู memory [[project-broadcast]]
 
 ### Employee personalization — ✅ shipped 2026-07-05
 BOB รู้จักพนักงานจาก email แล้ว (ทัก "คุณจ้อ", รู้ตำแหน่ง/ทีม/อายุงาน/หัวหน้า):
