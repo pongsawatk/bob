@@ -23,6 +23,8 @@ import {
 import { redact } from "../../src/analytics/redact.js";
 import { buildAnalysisInput, analyzeWithRetry, type LlmCall } from "../../src/analytics/analyze.js";
 import { renderReport, type EvidenceSample } from "../../src/analytics/report.js";
+import { reportRedisKey } from "../../src/analytics/reportLink.js";
+import { deliverReport } from "../../src/channels/insightDeliver.js";
 
 export const config = { maxDuration: 60 };
 
@@ -123,7 +125,7 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
 
     const report = renderReport({ current: cur, previous: prev, analysis, samples });
     const r = getRedis();
-    const reportRef = `${job.stateRef}:report`;
+    const reportRef = reportRedisKey(job.jobId);
     if (r) await r.set(reportRef, report, { ex: 60 * 60 * 24 });
     await store.update(job.jobId, { stage: "deliver", reportRef, status: analysis ? "running" : "partial" });
     await enqueueStage({ jobId: job.jobId, stage: "deliver" });
@@ -131,9 +133,16 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
   }
 
   if (stage === "deliver") {
-    // DRAFT: pending spike #3. Proven path = summary card + chunked text to the
-    // requester's stored conversation ref; secure-link/file added once spike #3 says so.
-    await store.update(job.jobId, { stage: "done", status: "completed" });
+    // Spike #3 decision: summary card + secure link → chunked-text fallback (no file).
+    const r = getRedis();
+    const report = job.reportRef && r ? await r.get<string>(job.reportRef) : null;
+    if (!report) throw new Error("deliver: report missing/expired");
+    const outcome = await deliverReport(job, report);
+    await store.update(job.jobId, {
+      stage: "done",
+      status: outcome === "failed" ? "failed" : job.status === "partial" ? "partial" : "completed",
+      error: outcome === "failed" ? "delivery failed" : undefined,
+    });
     return;
   }
 }

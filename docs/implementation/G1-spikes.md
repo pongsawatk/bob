@@ -8,7 +8,7 @@ or deploy/grant permissions — that's Jor/admin (§7.6). Fill the Result column
 |---|---|---|---|---|
 | 1 | Langfuse pagination + trace schema | `scripts/spike-langfuse.mjs` | read-only Langfuse | ✅ done (agent) |
 | 2 | Vercel duration + detached work | `api/spike/duration.ts` | deploy + prod config | ✅ done (Jor ran, agent drafted) |
-| 3 | Teams report delivery | `scripts/spike-teams-delivery.mjs` | sends a real DM (to self) | Jor |
+| 3 | Teams report delivery | `scripts/spike-teams-delivery.mjs` | sends a real DM (to self) | ✅ done (Jor ran) |
 | 4 | Azure AD group authorization | `scripts/spike-aad-auth.mjs` | read-only Graph | ✅ done (agent) |
 
 ---
@@ -47,11 +47,28 @@ Once decided, remove `api/spike/duration.ts` and the `@vercel/functions` dep if 
 
 *(Side note from Jor: `README.md`/`docs/status.md` were separately updated by Codex on 2026-07-11 — confirmed `$BASE` used for this spike (`bob-sidekick.vercel.app`) is served by the canonical `bob` Vercel project with real env vars, not the duplicate `bob-sidekick` project. Spike results are trustworthy.)*
 
-## 3. Teams delivery — ⏳ PENDING (Jor)
-`npx tsx scripts/spike-teams-delivery.mjs --to <YOUR_AAD_OBJECT_ID>` (DM BOB once first so a convref exists).
-Sends 4 methods to you; then eyeball the chat. Proves what actually renders in the prod 1:1 channel.
-**Decision:** pick the delivery order (summary card → secure-link card → file-consent if it works → chunked text).
-**Result:** _[card __ · link __ · file-consent __ · chunked __]_
+## 3. Teams delivery — ✅ RESOLVED (2026-07-11)
+`npx tsx scripts/spike-teams-delivery.mjs --to 5cee67ec-...` (Jor ran it against himself).
+
+| method | result |
+|---|---|
+| 1) Adaptive Card | ✅ renders |
+| 2) Card + Action.OpenUrl (link) | ✅ renders + button clickable |
+| 3) FileConsentCard | 🟡 card renders, but **"Something went wrong" on Allow** |
+| 4) Chunked plain text | ✅ both messages delivered |
+
+**Why #3 failed:** file delivery is a **two-step invoke protocol** — the card is step 1; when the
+user taps Allow, Teams sends a `fileConsent/invoke` activity back and the *live bot* must upload the
+file to the returned URL (step 2). The one-shot spike script has no invoke handler, so step 2 never
+happens → error. File delivery is possible but needs an invoke handler in `api/teams.ts` + a OneDrive
+upload — too much for MVP.
+
+**Decision (slice 6 deliver):** **summary card → secure link → chunked-text fallback.**
+- Report stored in Redis (`reportRef`); serve it from a new `api/insight/report?jobId=&token=` endpoint
+  (signed, expiring token). The deliver stage sends a summary Adaptive Card with an `Action.OpenUrl`
+  button to that link (method #2, proven).
+- If the link path ever fails, auto-fallback to chunked text (method #4, proven).
+- File upload = post-MVP enhancement (revisit the invoke-handler path later).
 
 ## 4. Azure AD group auth — ✅ RESOLVED (2026-07-11)
 `npx tsx scripts/spike-aad-auth.mjs --email pongsawat@builk.com`

@@ -52,8 +52,8 @@ Date: 2026-07-11 · Branch `main` @ `ab65c7c` · Node ≥20, ESM, TypeScript, de
 
 | Field | Value |
 |---|---|
-| Current Work Package | `WP-12 /insight Job` — **slices 1-5 drafted** (job spine, analyze, queue+RedisStore, command+worker, prompt fallback). ALL gated behind `INSIGHT_ENABLED` (default off) → inert. Remaining: activation (secrets/group/Langfuse prompt/approval) + slice 6 deliver (spike #3). |
-| Gate / approval | G0 **Pending**. G1: spikes **#1 Langfuse, #2 Vercel duration, #4 AAD all RESOLVED**; **#3 Teams delivery PENDING Jor** (see `docs/implementation/G1-spikes.md`). Others Pending. |
+| Current Work Package | `WP-12 /insight Job` — **all 6 slices drafted + tested** (spine, analyze, queue+RedisStore, command+worker, prompt, deliver=card+secure-link). ALL gated behind `INSIGHT_ENABLED` (default off) → inert. Code-complete; needs activation only. |
+| Gate / approval | G0 **Pending**. G1: **all 4 spikes RESOLVED** (#1 Langfuse, #2 Vercel duration→queue, #3 Teams delivery→link, #4 AAD group) — evidence complete, awaiting formal G1 sign-off + activation. Others Pending. |
 | Branch + base commit | `feat/analytics-people-foundation` @ `2273293` (WP-00/01/10/11 committed; WP-10 hardening + spikes uncommitted in tree) |
 | Verified architecture | Architecture map above + Langfuse `/api/public/traces` shape confirmed from `langfuse-core` types (`TraceWithDetails`: trace-level `latency` s, `totalCost` USD, `userId`, `sessionId`, `input`, `metadata`, `tags`; query params `fromTimestamp`/`toTimestamp`, paginated `page`/`meta.totalPages`). |
 | Changed files | No feature/runtime code. WP-10: `src/analytics/langfuse.ts`, `test-cases/analytics-fixture.json`, `scripts/insight-report.mjs`. WP-11: `src/analytics/redact.ts`, `src/analytics/report.ts`, `test/{redact,report}.test.ts`. Plus `test/{holidays,precache,directory,analytics}.test.ts`, `docs/implementation/*`, `package.json`. |
