@@ -55,8 +55,16 @@ test("normalizeTrace: missing category → OTHER + hasCategory false; precache t
   const noCat = normalizeTrace({ ...base, tags: ["teams"], metadata: { outputTokens: 0 } })!;
   assert.equal(noCat.intent, "OTHER");
   assert.equal(noCat.hasCategory, false);
-  const cached = normalizeTrace({ ...base, tags: ["teams", "GENERAL", "precache"], metadata: { category: "GENERAL" } })!;
+  // precache tag detection is order-independent (Langfuse sorts tags alphabetically).
+  const cached = normalizeTrace({ ...base, tags: ["GENERAL", "precache", "teams"], metadata: { category: "GENERAL" } })!;
   assert.equal(cached.fromCache, true);
+});
+
+test("normalizeTrace: channel from metadata.channel, not tags[0] (Langfuse sorts tags)", () => {
+  const base = { id: "x", timestamp: "2026-07-01T00:00:00Z", name: "bob-chat", userId: "a@b.com" };
+  // Real Langfuse ordering: tags[0] is "HR" (the category), channel is in metadata.
+  const n = normalizeTrace({ ...base, tags: ["HR", "llm", "teams"], metadata: { category: "HR", channel: "teams" } })!;
+  assert.equal(n.channel, "teams");
 });
 
 // ── normalizeAll: dedupe + exclusion over the fixture ──────────────────

@@ -144,8 +144,11 @@ export function normalizeTrace(t: RawTrace): NormalizedTurn | null {
     costUsd: num(t.totalCost),
     outputTokens,
     truncated: cap != null && outputTokens >= cap,
-    fromCache: tags.includes("precache"),
-    channel: typeof tags[0] === "string" ? tags[0] : "unknown", // pipeline sets tags[0] = channel
+    fromCache: tags.includes("precache"), // order-independent (Langfuse sorts tags)
+    // Langfuse returns tags alphabetically sorted, so tags[0] is NOT reliably the
+    // channel (confirmed by G1 spike). Read metadata.channel, which the pipeline
+    // stamps explicitly; fall back to tags only if absent.
+    channel: typeof md.channel === "string" ? md.channel : typeof tags[0] === "string" ? tags[0] : "unknown",
     hasCategory: catRaw != null,
     hasLatency: latencyMs > 0,
   };
@@ -243,15 +246,18 @@ type FetchLike = (url: string, init?: { headers?: Record<string, string> }) => P
   ok: boolean;
   status: number;
   statusText: string;
+  headers?: { get: (name: string) => string | null };
   text: () => Promise<string>;
   json: () => Promise<unknown>;
 }>;
 
-/** Paginated GET /api/public/traces over a window. Retries 5xx a few times. */
+/** Paginated GET /api/public/traces over a window. Retries 5xx AND 429 (the traces
+ *  endpoint is rate-limited — confirmed by G1 spike), honoring Retry-After. Use the
+ *  max page size (100) to minimize request count against that limit. */
 export async function fetchTraces(
   creds: LangfuseCreds,
   window: Window,
-  opts: { fetchImpl?: FetchLike; pageLimit?: number } = {}
+  opts: { fetchImpl?: FetchLike; pageLimit?: number; maxAttempts?: number } = {}
 ): Promise<RawTrace[]> {
   const f = (opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike));
   const auth = "Basic " + Buffer.from(`${creds.publicKey}:${creds.secretKey}`).toString("base64");
@@ -259,6 +265,7 @@ export async function fetchTraces(
   const from = new Date(window.fromMs).toISOString();
   const to = new Date(window.toMs).toISOString();
   const limit = opts.pageLimit ?? 100;
+  const maxAttempts = opts.maxAttempts ?? 5;
 
   const all: RawTrace[] = [];
   for (let page = 1; ; page++) {
@@ -269,8 +276,11 @@ export async function fetchTraces(
     for (let attempt = 1; ; attempt++) {
       res = await f(url, { headers: { Authorization: auth } });
       if (res.ok) break;
-      if (res.status >= 500 && attempt < 4) {
-        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      const retryable = res.status >= 500 || res.status === 429;
+      if (retryable && attempt < maxAttempts) {
+        const retryAfter = Number(res.headers?.get?.("retry-after")) || 0;
+        const waitMs = retryAfter > 0 ? retryAfter * 1000 : 1500 * attempt;
+        await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
       throw new Error(`GET /traces ${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`);
