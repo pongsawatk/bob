@@ -41,9 +41,20 @@ test("buildAnalysisInput: computes comparisons (delta/%/trend) in code", () => {
   assert.equal(turns.trend, "up");
 });
 
-test("buildAnalysisInput: percentChange is null when previous is 0", () => {
-  const input = buildAnalysisInput(mr({ uniqueUsers: 5 }), mr({ uniqueUsers: 0 }), cleanSamples);
+test("buildAnalysisInput: percentChange is null when previous metric is 0 (but window has data)", () => {
+  const input = buildAnalysisInput(mr({ uniqueUsers: 5 }), mr({ uniqueUsers: 0 }), cleanSamples); // prev.turns=100 → available
+  assert.equal(input.previousAvailable, true);
   assert.equal(input.comparisons.find((c) => c.metric === "unique users")!.percentChange, null);
+});
+
+test("buildAnalysisInput: no previous data → previousAvailable false + all comparisons null/not_available", () => {
+  const input = buildAnalysisInput(mr({ turns: 203 }), mr({ turns: 0 }), cleanSamples);
+  assert.equal(input.previousAvailable, false);
+  const turns = input.comparisons.find((c) => c.metric === "turns")!;
+  assert.equal(turns.previous, null);
+  assert.equal(turns.delta, null);
+  assert.equal(turns.percentChange, null);
+  assert.equal(turns.trend, "not_available");
 });
 
 test("buildAnalysisInput: evidence catalog has M (metrics), E (samples), D (warnings)", () => {

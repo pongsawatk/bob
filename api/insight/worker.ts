@@ -17,7 +17,7 @@ import {
 import { RedisJobStore } from "../../src/analytics/jobStoreRedis.js";
 import { insightEnabled, verifyQStash, enqueueStage } from "../../src/analytics/queue.js";
 import {
-  fetchTracesPage, normalizeAll, aggregate, windowFor,
+  fetchTracesPage, normalizeAll, aggregate,
   type NormalizedTurn, type RawTrace,
 } from "../../src/analytics/langfuse.js";
 import { redact } from "../../src/analytics/redact.js";
@@ -78,15 +78,17 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
   const tag = stageClaimTag(stage as never, stage === "fetch" ? job.cursor?.page : undefined);
   if (!(await store.claimStage(job.jobId, tag))) return;
 
-  const { current } = windowFor(job.windowDays);
   const creds = { host: env.LANGFUSE_HOST, publicKey: env.LANGFUSE_PUBLIC_KEY, secretKey: env.LANGFUSE_SECRET_KEY };
+  // Fetch across BOTH windows [previous.from, current.to] so the comparison has data
+  // (aggregate() filters each window itself). Windows are pinned on the job → no drift.
+  const fetchWindow = { fromMs: job.windows.previous.fromMs, toMs: job.windows.current.toMs };
 
   if (stage === "fetch") {
     const state = await loadState(job.stateRef);
     const names = await getDirectoryNames(); // for masking employee names in samples
     let cursor: FetchCursor = job.cursor ?? { page: 1, totalPages: null, fetched: 0 };
     for (;;) {
-      const pg = await fetchTracesPage(creds, current, cursor.page);
+      const pg = await fetchTracesPage(creds, fetchWindow, cursor.page);
       state.turns.push(...normalizeAll(pg.data));
       collectSamples(pg.data, state, names); // redacted candidates only
       const decision = nextFetchStep(cursor, { page: cursor.page, totalPages: pg.totalPages, count: pg.data.length }, deadline);
@@ -114,9 +116,8 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
 
   if (stage === "analyze") {
     const state = await loadState(job.stateRef);
-    const { current: cw, previous: pw } = windowFor(job.windowDays);
-    const cur = aggregate(state.turns, cw);
-    const prev = aggregate(state.turns, pw);
+    const cur = aggregate(state.turns, job.windows.current);
+    const prev = aggregate(state.turns, job.windows.previous);
     const samples: EvidenceSample[] = state.samples.slice(0, 10).map((s, i) => ({ id: `E${i + 1}`, intent: s.intent, text: s.text }));
     const input = buildAnalysisInput(cur, prev, samples);
 

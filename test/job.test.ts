@@ -40,6 +40,9 @@ test("newJob: starts queued at the fetch stage with keys set", () => {
   assert.equal(j.cursor, null);
   assert.ok(j.idempotencyKey.length === 32);
   assert.match(j.stateRef, /^bob:insight:job:.*:state$/);
+  // Windows pinned at creation: current is contiguous with previous, each 30 days.
+  assert.equal(j.windows.current.fromMs, j.windows.previous.toMs);
+  assert.equal(j.windows.current.toMs - j.windows.current.fromMs, 30 * 86_400_000);
 });
 
 // ── Deadline budget guard ──────────────────────────────────────────────

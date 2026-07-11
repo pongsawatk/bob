@@ -199,9 +199,14 @@ export function renderReport(opts: RenderOpts): string {
   L.push(`| latency p50 / p95 | ${sec(c.latencyP50Ms)} / ${sec(c.latencyP95Ms)} | ${pv(`${sec(p.latencyP50Ms)} / ${sec(p.latencyP95Ms)}`)} | — |`);
   L.push(`| cost | ${usd(c.costUsd)} | ${pv(usd(p.costUsd))} | — |`);
 
-  L.push(`\n## 3. Top topics ตาม intent`);
-  if (analysis && analysis.topTopics.length) analysis.topTopics.forEach((t) => L.push(`- **${t.intent}** — ${t.topic}${ev(t.evidenceIds)}`));
-  else L.push(`intent mix: ${Object.entries(c.intents).map(([k, v]) => `${k}=${v}`).join("  ")}`);
+  L.push(`\n## 3. หัวข้อ / Intent`);
+  // Real frequency comes from code (intent counts); the model's topTopics are only
+  // illustrative examples drawn from the redacted samples — never a frequency claim.
+  L.push(`intent mix (จริงจาก metrics): ${Object.entries(c.intents).map(([k, v]) => `${k}=${v}`).join("  ")}`);
+  if (analysis && analysis.topTopics.length) {
+    L.push(`\nตัวอย่างหัวข้อจาก samples (ไม่ใช่ความถี่จริง):`);
+    analysis.topTopics.forEach((t) => L.push(`- **${t.intent}** — ${t.topic}${ev(t.evidenceIds)}`));
+  }
 
   L.push(`\n## 4. Gap Analysis`);
   if (analysis && !partial && analysis.gaps.length) analysis.gaps.forEach((g) => L.push(`- **[${g.severity}/${g.category}]** ${g.statement}${ev(g.evidenceIds)}`));

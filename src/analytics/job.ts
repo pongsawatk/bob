@@ -5,6 +5,7 @@
 // confirmed by G1 spike #2), checkpoints, then enqueues a continuation.
 
 import crypto from "node:crypto";
+import { windowFor, type Window } from "./langfuse.js";
 
 export type JobStage = "fetch" | "aggregate" | "analyze" | "deliver" | "done";
 export type JobStatus =
@@ -41,6 +42,9 @@ export interface JobRecord {
   createdAt: string;
   updatedAt: string;
   error?: string;
+  /** Current + previous comparison windows, pinned at creation so every stage uses
+   *  the SAME boundaries (no drift as `now` advances between invocations). */
+  windows: { current: Window; previous: Window };
   /** Redis key holding normalized+redacted turns (never inlined into the queue). */
   stateRef: string;
   /** Redis key holding the rendered report. */
@@ -92,6 +96,7 @@ export function newJob(params: { requestedBy: string; windowDays: WindowDays; no
     maxAttempts: 5,
     createdAt: iso,
     updatedAt: iso,
+    windows: windowFor(params.windowDays, now),
     stateRef: `bob:insight:job:${jobId}:state`,
   };
 }

@@ -11,14 +11,14 @@ import { validateAnalysis, ANALYSIS_SCHEMA_VERSION, type AnalysisOutput, type Ev
 
 export const DEFAULT_ALLOWED_OWNERS = ["BOB Admin", "HR", "Product Team", "Platform Team"];
 
-export type Trend = "up" | "down" | "flat";
+export type Trend = "up" | "down" | "flat" | "not_available";
 export interface Comparison {
   id: string; // evidence id (M1, M2, …)
   metric: string;
   current: number;
-  previous: number;
-  delta: number;
-  percentChange: number | null; // null when previous = 0 (undefined ratio)
+  previous: number | null; // null when there is no previous data
+  delta: number | null;
+  percentChange: number | null; // null when previous = 0 or unavailable
   trend: Trend;
 }
 export interface EvidenceItem { id: string; kind: "M" | "E" | "D"; label: string; }
@@ -26,6 +26,8 @@ export interface EvidenceItem { id: string; kind: "M" | "E" | "D"; label: string
 export interface AnalysisInput {
   schemaVersion: string;
   reportWindow: { timezone: string; currentStart: string; currentEnd: string; previousStart: string; previousEnd: string };
+  /** false = the previous window has no data → no delta/percentChange/trend may be inferred. */
+  previousAvailable: boolean;
   dataQuality: { completeness: number; threshold: number; allowInterpretation: boolean; warnings: string[] };
   allowedOwners: string[];
   comparisons: Comparison[];
@@ -59,12 +61,18 @@ export function buildAnalysisInput(
   opts: { allowedOwners?: string[]; threshold?: number } = {}
 ): AnalysisInput {
   const threshold = opts.threshold ?? 0.9;
+  // No turns in the previous window = no baseline → emit nulls, never a fake delta.
+  const previousAvailable = previous.turns > 0;
 
   const comparisons: Comparison[] = METRICS.map((m, i) => {
     const cur = round2(Number(current[m.key]));
+    const id = `M${i + 1}`;
+    if (!previousAvailable) {
+      return { id, metric: m.label, current: cur, previous: null, delta: null, percentChange: null, trend: "not_available" };
+    }
     const prev = round2(Number(previous[m.key]));
     const delta = round2(cur - prev);
-    return { id: `M${i + 1}`, metric: m.label, current: cur, previous: prev, delta, percentChange: prev === 0 ? null : round2((delta / prev) * 100), trend: trendOf(delta) };
+    return { id, metric: m.label, current: cur, previous: prev, delta, percentChange: prev === 0 ? null : round2((delta / prev) * 100), trend: trendOf(delta) };
   });
 
   const safe: EvidenceSample[] = [];
@@ -88,6 +96,7 @@ export function buildAnalysisInput(
       currentStart: current.window.from.slice(0, 10), currentEnd: current.window.to.slice(0, 10),
       previousStart: previous.window.from.slice(0, 10), previousEnd: previous.window.to.slice(0, 10),
     },
+    previousAvailable,
     dataQuality: { completeness: round2(current.completeness), threshold, allowInterpretation: current.completeness >= threshold, warnings },
     allowedOwners: opts.allowedOwners ?? DEFAULT_ALLOWED_OWNERS,
     comparisons,
@@ -101,6 +110,7 @@ function serialize(input: AnalysisInput): string {
   return JSON.stringify({
     schemaVersion: input.schemaVersion,
     reportWindow: input.reportWindow,
+    previousAvailable: input.previousAvailable,
     dataQuality: input.dataQuality,
     allowedOwners: input.allowedOwners,
     comparisons: input.comparisons,
