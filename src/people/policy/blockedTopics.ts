@@ -17,7 +17,7 @@ export const BLOCKED_CATEGORIES: readonly BlockedCategory[] = [
   { code: "performance", re: /ผลประเมิน|ประเมินผล|เกรดพนักงาน|performance review|appraisal|kpi ของ|kpi ราย/ },
   { code: "ranking", re: /ใครเก่ง|เก่งสุด|ใครแย่|แย่สุด|ทำงานน้อย|ขยันสุด|ขี้เกียจ|จัดอันดับ.*(พนักงาน|คน)|เยอะสุด|ลาบ่อยสุด|เกรดแย่|who is (the )?(best|worst|laziest|smartest)|rank (the )?employees/ },
   { code: "attrition", re: /จะลาออก|กำลังจะออก|ทำนาย.*ลาออก|ข่าวลือ|นินทา|ซุบซิบ|gossip|attrition|going to resign/ },
-  { code: "enumeration", re: /พนักงานทั้งหมด|ทั้งบริษัท|ทุกคนในบริษัท|รายชื่อทั้งหมด|ทั้งหมดในบริษัท|อีเมล(ของ)?พนักงานทุกคน|all employees|everyone in the (company|org)|entire company|whole company|list all (employees|people|staff)/ },
+  { code: "enumeration", re: /พนักงานทั้งหมด|ทั้งบริษัท|ทุกคนในบริษัท|รายชื่อทั้งหมด|ทั้งหมดในบริษัท|พนักงานทุกคน|โปรไฟล์.*ทุกคน|all employees|everyone in the (company|org)|entire company|whole company|list all (employees|people|staff)|every (employee|staff|person)|dump .*(employee|directory|profile|record)/ },
   { code: "private", re: /เบอร์(โทร)?ส่วนตัว|ที่อยู่บ้าน|บ้านเลขที่|เลขบัตรประชาชน|บัตรประชาชน|personal phone|home address|national id|id card/ },
   { code: "field", re: /\brank\b|rank code|เรทติ้งพนักงาน|คำนำหน้า/ },
 ];
