@@ -223,6 +223,24 @@ export function namesFromProfiles(map: Record<string, Profile>): string[] {
   return [...names];
 }
 
+/** Full active-profile map (memory → Redis, never Graph) — for People Connector
+ *  cross-person retrieval (profileStore). Same read path as getDirectoryNames;
+ *  returns {} when the directory hasn't been loaded so callers degrade to empty. */
+export async function getActiveDirectory(): Promise<Record<string, Profile>> {
+  if (!mem || Date.now() - mem.at >= MEM_TTL_MS) {
+    const r = getRedis();
+    if (r) {
+      try {
+        const map = await r.get<Record<string, Profile>>(REDIS_KEY);
+        if (map) mem = { map, at: Date.now() };
+      } catch (err) {
+        console.error("getActiveDirectory: redis read failed:", err);
+      }
+    }
+  }
+  return mem ? mem.map : {};
+}
+
 /** Directory names for redaction. Reads memory → Redis (never Graph), like lookupProfile. */
 export async function getDirectoryNames(): Promise<string[]> {
   if (!mem || Date.now() - mem.at >= MEM_TTL_MS) {
