@@ -72,6 +72,7 @@ export const env = {
   INSIGHT_ADMIN_GROUP_ID: opt("INSIGHT_ADMIN_GROUP_ID"),   // AAD security group object id
   INSIGHT_WORKER_URL: opt("INSIGHT_WORKER_URL"),           // public URL of /api/insight/worker
   QSTASH_TOKEN: opt("QSTASH_TOKEN"),
+  QSTASH_URL: opt("QSTASH_URL"),                           // region endpoint from the QStash console
   QSTASH_CURRENT_SIGNING_KEY: opt("QSTASH_CURRENT_SIGNING_KEY"),
   QSTASH_NEXT_SIGNING_KEY: opt("QSTASH_NEXT_SIGNING_KEY"),
 } as const;

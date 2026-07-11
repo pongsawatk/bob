@@ -14,7 +14,9 @@ export function insightEnabled(): boolean {
 let _client: Client | null = null;
 function client(): Client {
   if (!env.QSTASH_TOKEN) throw new Error("QSTASH_TOKEN not configured");
-  return (_client ??= new Client({ token: env.QSTASH_TOKEN }));
+  // baseUrl must match the account's QStash region (else "user not found in this
+  // region"). Empty env → undefined → SDK default (https://qstash.upstash.io).
+  return (_client ??= new Client({ token: env.QSTASH_TOKEN, baseUrl: env.QSTASH_URL || undefined }));
 }
 
 let _receiver: Receiver | null = null;
