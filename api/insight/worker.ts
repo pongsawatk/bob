@@ -57,11 +57,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const job = await store.get(jobId);
   if (!job) { res.status(200).json({ ok: false, note: "job gone" }); return; } // don't retry a vanished job
 
+  // At-least-once dedup: skip a duplicate delivery of the same (stage[,page]).
+  const tag = stageClaimTag(stage as never, stage === "fetch" ? job.cursor?.page : undefined);
+  if (!(await store.claimStage(job.jobId, tag))) { res.status(200).json({ ok: true, deduped: true }); return; }
+
   try {
     const deadline = new Deadline(DEFAULT_WORKER_BUDGET_MS);
     await runStage(job, stage, store, deadline);
     res.status(200).json({ ok: true, jobId, stage });
   } catch (err) {
+    await store.releaseClaim(job.jobId, tag); // failed attempt → let QStash retry this stage
     const attempts = (job.attempts ?? 0) + 1;
     if (attempts >= job.maxAttempts) {
       await store.update(jobId, { status: "failed", attempts, error: String(err).slice(0, 200) });
@@ -74,10 +79,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 async function runStage(job: JobRecord, stage: string, store: RedisJobStore, deadline: Deadline): Promise<void> {
-  // At-least-once dedup: skip if this exact (stage[,page]) was already processed.
-  const tag = stageClaimTag(stage as never, stage === "fetch" ? job.cursor?.page : undefined);
-  if (!(await store.claimStage(job.jobId, tag))) return;
-
   const creds = { host: env.LANGFUSE_HOST, publicKey: env.LANGFUSE_PUBLIC_KEY, secretKey: env.LANGFUSE_SECRET_KEY };
   // Fetch across BOTH windows [previous.from, current.to] so the comparison has data
   // (aggregate() filters each window itself). Windows are pinned on the job → no drift.
@@ -122,9 +123,11 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
     const input = buildAnalysisInput(cur, prev, samples);
 
     const { text: sys } = await getPrompt("insight-analysis");
+    const model = env.MODEL_INSIGHT || env.MODEL_ASYNC;
     const llm: LlmCall = async (userContent) =>
-      (await callLLM({ model: env.MODEL_ASYNC, systemPrompt: sys, messages: [{ role: "user", content: userContent }], maxTokens: 2000, temperature: 0.3 })).text;
-    const { analysis } = await analyzeWithRetry(input, llm);
+      (await callLLM({ model, systemPrompt: sys, messages: [{ role: "user", content: userContent }], maxTokens: 2000, temperature: 0.3 })).text;
+    // Deadline-aware: won't start an attempt that can't finish in budget → numbers-only.
+    const { analysis } = await analyzeWithRetry(input, llm, { maxAttempts: 2, deadline, perAttemptMs: 22_000 });
 
     // Render only the leak-checked subset buildAnalysisInput kept (appendix safety).
     const report = renderReport({ current: cur, previous: prev, analysis, samples: input.samples });

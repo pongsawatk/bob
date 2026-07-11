@@ -18,6 +18,7 @@ export const env = {
   MODEL_GENERAL: opt("MODEL_GENERAL", "google/gemini-3.1-flash-lite"),
   MODEL_PRODUCT: opt("MODEL_PRODUCT", "anthropic/claude-sonnet-4-6"),
   MODEL_ASYNC:   opt("MODEL_ASYNC",   "deepseek/deepseek-v4-flash"),
+  MODEL_INSIGHT: opt("MODEL_INSIGHT", ""),  // /insight analysis; empty → MODEL_ASYNC
 
   // Langfuse (optional — bot still works without it)
   LANGFUSE_PUBLIC_KEY: opt("LANGFUSE_PUBLIC_KEY"),

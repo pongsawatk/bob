@@ -102,6 +102,16 @@ test("analyzeWithRetry: rejects hallucinated evidence, retries, then falls back"
   assert.ok(r.errors.every((e) => e.includes("unknown evidence") || e.includes("M99")));
 });
 
+test("analyzeWithRetry: skips the LLM when the deadline budget is insufficient (no timeout)", async () => {
+  let called = 0;
+  const llm: LlmCall = async () => { called++; return JSON.stringify(goodOutput()); };
+  const deadline = { remainingMs: () => 5_000 }; // < perAttemptMs
+  const r = await analyzeWithRetry(buildAnalysisInput(mr(), mr(), cleanSamples), llm, { deadline, perAttemptMs: 22_000 });
+  assert.equal(called, 0); // never risked an over-budget LLM call
+  assert.equal(r.analysis, null); // numbers-only fallback
+  assert.ok(r.errors[0]!.includes("insufficient budget"));
+});
+
 test("analyzeWithRetry: swallows llm errors and falls back", async () => {
   const llm: LlmCall = async () => { throw new Error("timeout"); };
   const r = await analyzeWithRetry(buildAnalysisInput(mr(), mr(), cleanSamples), llm, { maxAttempts: 2 });

@@ -147,14 +147,25 @@ export interface AnalyzeResult {
 }
 
 /** Call the model, validate strictly against the input's evidence catalog + owners,
- *  retry on bad output, then fall back to null. Never throws. */
-export async function analyzeWithRetry(input: AnalysisInput, llm: LlmCall, opts: { maxAttempts?: number } = {}): Promise<AnalyzeResult> {
+ *  retry on bad output, then fall back to null. Never throws. Deadline-aware: it will
+ *  NOT start an LLM attempt that can't finish inside the remaining budget — it falls
+ *  back to numbers-only (null) instead of risking the ~58s function timeout. */
+export async function analyzeWithRetry(
+  input: AnalysisInput,
+  llm: LlmCall,
+  opts: { maxAttempts?: number; deadline?: { remainingMs: () => number }; perAttemptMs?: number } = {}
+): Promise<AnalyzeResult> {
   const maxAttempts = opts.maxAttempts ?? 3;
+  const perAttemptMs = opts.perAttemptMs ?? 22_000;
   const userContent = buildUserMessage(input);
   const ctx = { evidenceIds: new Set(input.evidenceCatalog.map((x) => x.id)), allowedOwners: input.allowedOwners };
   const errors: string[] = [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (opts.deadline && opts.deadline.remainingMs() < perAttemptMs) {
+      errors.push(`stopped before attempt ${attempt}: insufficient budget → numbers-only`);
+      break;
+    }
     let raw: string;
     try { raw = await llm(userContent); }
     catch (er) { errors.push(`attempt ${attempt}: llm error: ${String(er).slice(0, 80)}`); continue; }

@@ -60,4 +60,9 @@ export class RedisJobStore implements JobStore {
   async releaseIdempotency(idempotencyKey: string): Promise<void> {
     if (this.r) await this.r.del(idemKey(idempotencyKey));
   }
+
+  /** Release a stage claim so a failed attempt can be retried by QStash. */
+  async releaseClaim(jobId: string, tag: string): Promise<void> {
+    if (this.r) await this.r.del(claimKey(jobId, tag));
+  }
 }
