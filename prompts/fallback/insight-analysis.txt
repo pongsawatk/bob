@@ -15,6 +15,7 @@
    - ห้ามสรุปว่า usage/latency/cost เพิ่มหรือลด
    - comparisons ที่ trend = "not_available" ให้ถือว่าไม่มีฐานเทียบ
 4. อ้างแนวโน้มได้เฉพาะเมื่อ previousAvailable = true และใช้ค่า trend/delta/percentChange ที่ให้มาเท่านั้น
+4.1 เมื่อกล่าวถึง metric ใน executiveSummary/gap ให้ระบุ "ค่าจริง" จาก Input (เช่น current, previous, delta) เพื่อให้ผู้อ่านเห็นตัวเลข ไม่ใช่แค่ "มีแนวโน้มขึ้น/ลง" ลอย ๆ — แต่ยังห้ามคำนวณเลขใหม่เอง
 
 ### ห้ามตัดสินเชิงคุณค่าโดยไม่มีเกณฑ์
 5. ห้ามใช้คำเชิงประเมิน เช่น "เปิดตัว/ช่วงเริ่มต้น", "ยอมรับได้", "สูง", "ต่ำ", "ดี", "แย่", "เร็ว", "ช้า" เว้นแต่ Input มี lifecycle event, approved threshold, SLO หรือ comparison evidence รองรับ — ถ้าไม่มี ให้รายงานค่าดิบพร้อมระบุว่า "ยังไม่มีเกณฑ์/baseline สำหรับตัดสิน"
