@@ -124,10 +124,14 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
 
     const { text: sys } = await getPrompt("insight-analysis");
     const model = env.MODEL_INSIGHT || env.MODEL_ASYNC;
+    // 4000 not 2000: the full analysis JSON is ~2.4k output tokens — 2k truncated it
+    // mid-object (→ "no JSON") and reasoning models emptied the budget (→ empty content).
+    const maxTokens = Number(env.INSIGHT_MAX_TOKENS) || 4000;
     const llm: LlmCall = async (userContent) =>
-      (await callLLM({ model, systemPrompt: sys, messages: [{ role: "user", content: userContent }], maxTokens: 2000, temperature: 0.3 })).text;
+      (await callLLM({ model, systemPrompt: sys, messages: [{ role: "user", content: userContent }], maxTokens, temperature: 0.3 })).text;
     // Deadline-aware: won't start an attempt that can't finish in budget → numbers-only.
-    const { analysis, errors: analyzeErrors } = await analyzeWithRetry(input, llm, { maxAttempts: 2, deadline, perAttemptMs: 22_000 });
+    // perAttemptMs ~35s reflects a real Sonnet analysis call (~33s at 4k tokens).
+    const { analysis, errors: analyzeErrors } = await analyzeWithRetry(input, llm, { maxAttempts: 2, deadline, perAttemptMs: 35_000 });
 
     // Render only the leak-checked subset buildAnalysisInput kept (appendix safety).
     const report = renderReport({ current: cur, previous: prev, analysis, samples: input.samples });

@@ -19,6 +19,7 @@ export const env = {
   MODEL_PRODUCT: opt("MODEL_PRODUCT", "anthropic/claude-sonnet-4-6"),
   MODEL_ASYNC:   opt("MODEL_ASYNC",   "deepseek/deepseek-v4-flash"),
   MODEL_INSIGHT: opt("MODEL_INSIGHT", ""),  // /insight analysis; empty → MODEL_ASYNC
+  INSIGHT_MAX_TOKENS: opt("INSIGHT_MAX_TOKENS", "4000"), // analysis JSON needs ~2.4k+; 2k truncates
 
   // Langfuse (optional — bot still works without it)
   LANGFUSE_PUBLIC_KEY: opt("LANGFUSE_PUBLIC_KEY"),
