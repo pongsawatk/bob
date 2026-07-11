@@ -1,7 +1,7 @@
 # BOB Sidekick — Project Status & Roadmap
 
 > **Single source of truth** ว่าโปรเจกต์ทำอะไรไปแล้ว กำลังทำอะไร และจะทำอะไรต่อ
-> อัปเดตล่าสุด: **2026-07-04** · เจ้าของ: Jor / Pongsawat K. (Head of Contech BU, PM)
+> อัปเดตล่าสุด: **2026-07-11** · เจ้าของ: Jor / Pongsawat K. (Head of Contech BU, PM)
 >
 > เอกสารนี้สรุปจากบันทึกการทำงานสะสม. รายละเอียดเชิงลึก/บทเรียนเฉพาะเรื่องอยู่ใน
 > Notion (ลิงก์ท้ายไฟล์) และ commit history. เหตุผลเชิงสถาปัตยกรรมดู
@@ -88,7 +88,11 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - **Repo:** https://github.com/pongsawatk/bob (private, `main`)
 - **Prod:** https://bob-sidekick.vercel.app · Teams endpoint `POST /api/teams` · test `POST /api/chat`
 - **Vercel prod project:** `prj_EgzugREDS2VIwnPxjMYtEv4Uo0Jb` (Git-integrated, มี env)
-  ⚠️ **deploy ผ่าน git push เท่านั้น** — CLI ในเครื่อง link ผิด project (`prj_ddv…` ไม่มี env)
+  ชื่อ project = **`bob`**; local repo metadata (`.vercel/repo.json`) link มาที่ project นี้แล้ว.
+- **Vercel duplicate:** `bob-sidekick` (`prj_ddvwnfQDQbrM8g3wNJI6C30D05fA`) ถูกสร้างภายหลังเมื่อ
+  2026-06-01 และเชื่อม GitHub repo `pongsawatk/bob` เดียวกัน จึง build commit จาก `main` ซ้ำกับ `bob`.
+  ตัวนี้ใช้ domain `bob-sidekick-two.vercel.app`; production domain จริง `bob-sidekick.vercel.app` อยู่ที่ `bob`.
+  ก่อนลบให้ยืนยันว่าไม่มี domain/env/integration ที่ต้องเก็บ แล้ว disconnect Git หรือ archive/delete `bob-sidekick`.
 - **Azure Bot / App ID:** `06f1e303-e8d2-4bd2-8b8a-d4fff49d7c18` · Tenant `dbb514a1-e97b-4b50-be5f-c00508b9ad5a`
 - **Subscription:** `Bot-Platform` (MCA ของ Kittisak), RG `rg-bob`
 - **Outline collection "BOB Knowledge Base":** `dab98231-5cc8-4805-9dcd-7e447a292398` (ฝั่ง Product)
@@ -165,12 +169,16 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 
 ## 6. 🔄 กำลังทำ / เฝ้าดู
 
-- **Repo audit 2026-06-27:** `npm run typecheck` และ `npm run build` ผ่าน. `main` ยัง ahead `origin/main` 2 commits
-  และมีไฟล์วิเคราะห์ Langfuse/Q&A แบบ untracked ใน `scripts/tmp-*`, `scripts/tmp-qa-data.json`,
-  `scripts/tmp-qa-review.txt`, `scripts/analyze-qa.mjs` (ยังไม่ stage/commit).
-- **Markdown audit 2026-06-27:** ค้นแบบ `-Force` แล้วไม่พบ `.md` ซ่อนนอกชุดที่อ่านแล้ว. `.claude/` มีแค่
+- **Repo audit 2026-07-11:** `main` clean และ sync กับ `origin/main`; `npm test` **42/42 PASS**,
+  `npm run typecheck` PASS และ `npm run build` PASS.
+- **Markdown audit:** ค้นรวม hidden/legacy แล้ว. `.claude/` มีแค่
   `settings.local.json`; `_archive/docs/*` และ `_archive/kb-schema/*` เป็นเอกสาร Claude/AI pairing ยุคเก่า
   (n8n + Notion KB + Sheets) ให้อ่านเป็นประวัติ/บทเรียน ไม่ใช่ runbook ปัจจุบัน.
+- **Continuous Improvement Analytics (2026-07-11):** WP-10 analytics foundation และ WP-11
+  privacy/report schema เสร็จแบบ additive ยังไม่ต่อเข้ากับ production pipeline. Live read 7 วันยืนยันประมาณ
+  **200 turns / 61 users**, completeness **93.5%**, cost **$5.98/7d**; Langfuse และ AAD auth spikes ผ่านแล้ว.
+  ยังรอ Jor รัน Vercel duration/detached-work spike และ Teams delivery spike, sign-off Metric Contract/G0,
+  แล้วจึงเริ่ม WP-12 job/auth/delivery. ดู `docs/implementation/`.
 - **เก็บ latency breakdown production** (timings/spans ใน trace) ต่ออีก 1–2 วันเพื่อยืนยันผล
 - **Langfuse scoring** — เหลือตั้ง Score Config + Human Annotation (ช่วงเบต้า) ก่อนทำ LLM-as-judge
 - ตอบ feedback 👍/👎 ภายใน 24 ชม. (commitment ช่วง beta)
@@ -178,6 +186,12 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 ---
 
 ## 7. 📋 แผนถัดไป (เรียงตาม impact)
+
+### Continuous Improvement Analytics — ปิด G0/G1 ก่อนต่อ production
+- Jor รัน spike #2 Vercel duration/detached work และ #3 Teams delivery ตาม `docs/implementation/G1-spikes.md`.
+- ตัดสินใจ Metric Contract §6 และยืนยัน G0 data-owner/HR fields.
+- จากนั้นทำ WP-12 (`/insight`, job model, AAD group gate, delivery) → WP-13 shadow/G2.
+- โค้ด analytics ปัจจุบันยังไม่กระทบ request path ของ BOB และ rollback ได้โดยไม่แตะ production behavior.
 
 ### Latency / Cost — คอขวดย้ายไป output tokens แล้ว
 จากการวัดรอบ 2 (169 เทิร์น): retrieval ลด input จริง แต่ p50 ลดแค่ 13.3s→12.5s
@@ -271,8 +285,9 @@ rollback = ย้าย label `production` กลับ version เก่า.
   ไม่ตั้ง env = พฤติกรรมเดิม 100%.
 
 ### Deploy
-**git push → main เท่านั้น** (auto-deploy Vercel). อย่าใช้ `vercel --prod` (link ผิด project).
-ดู logs/deployments ใน Vercel dashboard ของ `prj_Egz…`.
+**git push → main เท่านั้น** (auto-deploy Vercel). Canonical project คือ `bob` (`prj_Egz…`).
+จนกว่าจะ disconnect/delete project ซ้ำ `bob-sidekick` ทุก push อาจสร้าง deployment สองชุด; อย่าใช้
+`vercel --prod` เพื่อแก้ เพราะเสี่ยง deploy ผิด project/env.
 
 ### Eval ก่อน ship (โดยเฉพาะแตะ HR bundle/retrieval)
 ```bash
@@ -314,8 +329,12 @@ field: `latency` เป็น **วินาที** (×1000), cost = `calculate
 ## 11. Related docs & Notion
 
 - [`migration-plan-v2.md`](./migration-plan-v2.md) — เหตุผลเชิงสถาปัตยกรรม (ทำไมเลิก n8n)
+- [`implementation/WP-00-discovery.md`](./implementation/WP-00-discovery.md) — architecture map + implementation state ล่าสุด
+- [`implementation/metric-contract.md`](./implementation/metric-contract.md) — metric definitions และ decision ที่ยังรอ sign-off
+- [`implementation/G1-spikes.md`](./implementation/G1-spikes.md) — technical gates ก่อนต่อ `/insight` เข้า production
 - `_archive/docs/` — เอกสารยุค Phase-0 (n8n/Notion/Sheets) เก็บไว้อ้างอิงประวัติ; อย่าใช้เป็น checklist ปัจจุบัน
 - `_archive/kb-schema/CLAUDE.md` และ `BOB.md` — convention เก่าของ AI maintainer; ใช้เฉพาะหลักการ citation/refusal/volatility
+- Notion "BOB Project Knowledge Hub — สถานะจริง บทเรียน และแนวทางพัฒนาต่อ" (`4ff94a42-532b-4f8a-91c3-65d0453bae67`)
 - Notion "BOB Usage, Performance & Cost — Langfuse" (`37846733f6808190ba87c00896059653`)
 - Notion "วิเคราะห์การใช้งานจริง 5–11 มิ.ย. 2026" (`37c46733f68081e1973ad157a3c782d9`)
 - Notion "BOB Sprint Run Log" (`454eea66a32345d59d7f9cf4ea3971f5`)

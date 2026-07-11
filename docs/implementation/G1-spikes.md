@@ -23,15 +23,22 @@ or deploy/grant permissions — that's Jor/admin (§7.6). Fill the Result column
 - **Data quality**: 375 raw → 200 after dedupe+exclusion (175 dropped, mostly `eval` test traffic); 0 missing category; 13 missing latency → completeness ≈93.5% (> 0.9 floor).
 - **Cost reality check**: ~$5.98 / 7d (post-broadcast) — far above the old "$3–5/month" guess. Set the SLO/budget from measured data, not that estimate (spec §6.8).
 
-## 2. Vercel duration / detached work — ⏳ PENDING (Jor)
-Deploy, then with `CRON_SECRET` set:
-```
-curl -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/spike/duration?mode=sync&run=A"
-curl -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/spike/duration?read=A"      # last heartbeat = real cap
-curl -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/spike/duration?mode=detach&run=B"
-curl -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/spike/duration?read=B"      # did detached work continue?
-```
-Proves: (a) true `maxDuration` cap (60s configured — does a bump stick on this plan?), (b) whether fire-and-forget survives the response. **Decision:** if a full `/insight` run (fetch + LLM analysis) can't finish under the cap, or detached work is frozen → use **QStash/queue** from MVP (spec §2.4). **Result:** _[cap = __s; detached continued? __]_ · Remove the route after.
+## 2. Vercel duration / detached work — 🟡 PARTIAL (2026-07-11; waituntil mode PENDING)
+
+Results so far (production, `maxDuration: 60`):
+
+- **sync mode**: client got `FUNCTION_INVOCATION_TIMEOUT`; last Redis heartbeat = **58s**. → **The 60s cap is real and enforced** (killed ~58–60s in).
+- **detach mode** (bare `void heartbeat(...)`, not awaited): heartbeat = **`null`** — the background work never wrote even its *first* checkpoint (elapsed=0). → **Plain fire-and-forget gets zero execution time after the response is sent.** Worse than "cut off early" — it doesn't run at all.
+- **waituntil mode** (`@vercel/functions#waitUntil`, added after the negative fire-and-forget result — this is Vercel's official "extend lifetime past the response" primitive, not a new hosting vendor): code deployed, **not yet run**.
+  ```
+  curl -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/spike/duration?mode=waituntil&run=C"
+  # wait ~20-30s, then:
+  curl -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/spike/duration?read=C"
+  ```
+  - If `heartbeat` shows a `lastElapsedS > 0` (ideally climbing across repeated reads) → `waitUntil` is a usable primitive for `/insight`, still bounded by the ~58s cap.
+  - If it's also `null` → this Vercel plan/runtime doesn't extend Node.js Serverless Functions (the primitive may only apply to Edge/Next.js) → **use QStash/queue from MVP**, per spec's own fallback (§2.4, §6).
+
+**Decision (pending waituntil result):** if a full `/insight` run (paginated Langfuse fetch + LLM analysis) can't finish inside ~58s even with `waitUntil`, or `waitUntil` doesn't extend at all → commit to a durable queue (QStash) for WP-12 from the start. Remove `api/spike/duration.ts` (and the `@vercel/functions` dep if unused elsewhere) once this is settled.
 
 ## 3. Teams delivery — ⏳ PENDING (Jor)
 `npx tsx scripts/spike-teams-delivery.mjs --to <YOUR_AAD_OBJECT_ID>` (DM BOB once first so a convref exists).

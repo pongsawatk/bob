@@ -42,7 +42,7 @@ MS Teams ⇄ Azure Bot F0 (Single-Tenant) ⇄ Vercel /api/teams
 | Tier | Model |
 |---|---|
 | Router | `google/gemini-3.1-flash-lite` |
-| HR / Product | `anthropic/claude-sonnet-4-6` |
+| HR / Product | `anthropic/claude-sonnet-5` in production via env; code fallback = `anthropic/claude-sonnet-4-6` |
 | General | `google/gemini-3.1-flash-lite` |
 | Async / Eval | `deepseek/deepseek-v4-flash` |
 
@@ -85,7 +85,9 @@ node scripts/analyze-langfuse.mjs [days]   # latency / cost / token / cache anal
 
 ### Deploy
 **git push → `main` only** (Vercel auto-deploys the Git-integrated project).
-Do **not** use `vercel --prod` — the local CLI is linked to the wrong project (no env vars).
+Canonical Vercel project = **`bob`** (`bob-sidekick.vercel.app`). A duplicate project named
+`bob-sidekick` is also Git-integrated and should be disconnected/removed after checking its settings;
+until then, a push may trigger two builds. Do **not** use `vercel --prod` as a workaround.
 
 ## Critical rules (encoded in prompts + eval)
 

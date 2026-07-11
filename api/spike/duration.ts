@@ -10,12 +10,19 @@
 //     curl -H "Authorization: Bearer $CRON_SECRET" "$URL/api/spike/duration?mode=detach&run=B"
 //     → if Redis heartbeats stop right after the response, detached work is frozen →
 //       we MUST use a queue, not fire-and-forget.
+//   waituntil mode — same as detach, but registers the promise via Vercel's official
+//   @vercel/functions#waitUntil instead of a bare unawaited call.
+//     curl -H "Authorization: Bearer $CRON_SECRET" "$URL/api/spike/duration?mode=waituntil&run=C"
+//     → if THIS survives (unlike plain detach) it's a usable primitive for /insight;
+//       if it also freezes, the platform doesn't extend Node.js Serverless Functions
+//       (only Edge/Next.js), and a durable queue (QStash) is required.
 //   read — dump what actually got written.
 //     curl -H "Authorization: Bearer $CRON_SECRET" "$URL/api/spike/duration?read=A"
 //
 // SAFE: writes only to spike:duration:* keys (60-min TTL); no user-facing effect.
 // REMOVE after the spike — this is not production code.
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { waitUntil } from "@vercel/functions";
 import { env } from "../../src/env.js";
 import { getRedis } from "../../src/store/redis.js";
 
@@ -58,6 +65,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // to be frozen once the response is sent — the point is to prove that.
     void heartbeat(run, 120_000);
     res.status(200).json({ ok: true, mode: "detach", run, note: "returned immediately; read back to see if heartbeats continued" });
+    return;
+  }
+
+  if (q.mode === "waituntil") {
+    // Same background work, but registered with Vercel's official primitive for
+    // "keep running after the response" instead of a bare unawaited call.
+    waitUntil(heartbeat(run, 120_000));
+    res.status(200).json({ ok: true, mode: "waituntil", run, note: "returned immediately; read back to see if heartbeats continued" });
     return;
   }
 
