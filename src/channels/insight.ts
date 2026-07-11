@@ -109,6 +109,14 @@ export async function handleInsightCommand(cmd: InsightCommand, caller: InsightC
     return `มีรายงาน ${cmd.days}d ของวันนี้อยู่แล้วครับ — เช็คสถานะ: \`/insight-status ${existing.jobId}\``;
   }
   await store.update(job.jobId, { status: "queued" });
-  await enqueueStage({ jobId: job.jobId, stage: "fetch" });
+  try {
+    await enqueueStage({ jobId: job.jobId, stage: "fetch" });
+  } catch (err) {
+    // Don't leave the job stuck "queued" + dedup-blocked: mark it failed and release
+    // the idempotency key so the admin can retry after fixing config.
+    await store.update(job.jobId, { status: "failed", error: String(err).slice(0, 200) });
+    await store.releaseIdempotency(job.idempotencyKey);
+    throw err; // surfaced to the admin by the teams.ts handler
+  }
   return `รับคำสั่งแล้วครับ ⏳ กำลังสร้างรายงาน ${cmd.days}d\nเช็คสถานะได้ที่: \`/insight-status ${job.jobId}\``;
 }

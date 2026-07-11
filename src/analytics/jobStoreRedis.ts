@@ -54,4 +54,10 @@ export class RedisJobStore implements JobStore {
     const set = await this.r.set(claimKey(jobId, tag), 1, { nx: true, ex: TTL });
     return set !== null;
   }
+
+  /** Drop the idempotency mapping so the same request can be retried (e.g. after an
+   *  enqueue failure). Does not delete the job record itself. */
+  async releaseIdempotency(idempotencyKey: string): Promise<void> {
+    if (this.r) await this.r.del(idemKey(idempotencyKey));
+  }
 }

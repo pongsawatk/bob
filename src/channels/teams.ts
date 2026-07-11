@@ -285,7 +285,13 @@ export async function handleTeamsRequest(
       if (cmd) {
         const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
         const email = await resolveEmail(ctx, aadId);
-        await ctx.sendActivity(await handleInsightCommand(cmd, { aadObjectId: aadId, email }));
+        try {
+          await ctx.sendActivity(await handleInsightCommand(cmd, { aadObjectId: aadId, email }));
+        } catch (err) {
+          // Admin-only command → surface the real cause to help activation/debugging.
+          console.error("/insight failed:", err);
+          await ctx.sendActivity(`⚠️ /insight ผิดพลาด: ${String(err).slice(0, 300)}`);
+        }
         return;
       }
     }
