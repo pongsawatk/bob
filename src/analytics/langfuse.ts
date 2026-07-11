@@ -31,6 +31,9 @@ export interface RawTrace {
   name?: string | null;
   userId?: string | null;
   sessionId?: string | null;
+  /** The user's message. Kept for redacted evidence sampling (report.ts) only —
+   *  it is raw PII and must pass through redact() before leaving the process. */
+  input?: unknown;
   metadata?: unknown; // { category, latencyMs, outputTokens, ... } stamped by the pipeline
   tags?: string[] | null; // [channel, category, "llm"|"precache"]
   latency?: number | null; // seconds
