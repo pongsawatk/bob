@@ -9,7 +9,7 @@ or deploy/grant permissions — that's Jor/admin (§7.6). Fill the Result column
 | 1 | Langfuse pagination + trace schema | `scripts/spike-langfuse.mjs` | read-only Langfuse | ✅ done (agent) |
 | 2 | Vercel duration + detached work | `api/spike/duration.ts` | deploy + prod config | Jor |
 | 3 | Teams report delivery | `scripts/spike-teams-delivery.mjs` | sends a real DM (to self) | Jor |
-| 4 | Azure AD group authorization | `scripts/spike-aad-auth.mjs` | read-only Graph | Jor (or agent w/ OK) |
+| 4 | Azure AD group authorization | `scripts/spike-aad-auth.mjs` | read-only Graph | ✅ done (agent) |
 
 ---
 
@@ -39,12 +39,16 @@ Sends 4 methods to you; then eyeball the chat. Proves what actually renders in t
 **Decision:** pick the delivery order (summary card → secure-link card → file-consent if it works → chunked text).
 **Result:** _[card __ · link __ · file-consent __ · chunked __]_
 
-## 4. Azure AD group auth — ⏳ PENDING
-`npx tsx scripts/spike-aad-auth.mjs --email you@builk.com [--group <GROUP_OBJECT_ID>]`
-Proves whether the bot app can read group membership (for AD-group admin gating) or 403s (→ grant
-`GroupMember.Read.All`/`Directory.Read.All` + consent, or keep the email allowlist). The app currently
-holds `Sites.Read.All` (for the HR sheet); group read may not be consented yet.
-**Result:** _[resolve user __ · read groups __ · verdict __]_
+## 4. Azure AD group auth — ✅ RESOLVED (2026-07-11)
+`npx tsx scripts/spike-aad-auth.mjs --email pongsawat@builk.com`
+
+- **App CAN read group membership**: `transitiveMemberOf` returned **35 group ids** for the user (HTTP 200). No new membership permission needed.
+- **Caveat — group `displayName` is `null`**: the app reads membership (ids) but not group *properties/names*. Reading names would need `Group.Read.All`/`Directory.Read.All` + admin consent. **Not required** for gating.
+- **Verdict:** `/insight` can gate on a **group object id** (Metric Contract req #2 satisfiable now). We match by id, never by name.
+- **WP-12 implementation notes:**
+  - Configure `INSIGHT_ADMIN_GROUP_ID=<guid>` (a new "BOB Insight Admins" security group Jor creates + adds himself to).
+  - At command time use the lighter **`POST /users/{aadObjectId}/checkMemberGroups`** (body: `{groupIds:[INSIGHT_ADMIN_GROUP_ID]}`) instead of listing all 35 — one cheap call; `activity.from.aadObjectId` is already available in `teams.ts`.
+  - Keep `KB_ADMIN_EMAILS` as the documented temporary fallback until the group is created (spec §2, req #2).
 
 ---
 
