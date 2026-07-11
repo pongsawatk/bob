@@ -53,7 +53,7 @@ Date: 2026-07-11 · Branch `main` @ `ab65c7c` · Node ≥20, ESM, TypeScript, de
 | Field | Value |
 |---|---|
 | Current Work Package | `WP-12 /insight Job` — **LIVE in production (admin-only)** as of 2026-07-11. Full pipeline works: `/insight` → QStash → worker (fetch→aggregate→analyze→deliver) → summary card + secure report link. Next = `WP-13` shadow validation (G2). |
-| Gate / approval | G0 **Pending**. **G1 PASSED** (all 4 spikes resolved + feature activated). G2 (shadow) next. Activation notes below. |
+| Gate / approval | G0 **Pending**. **G1 PASSED**. **G2 shadow round 1 PASSED (2026-07-11)**: `/insight 7d` vs `npm run insight:report 7` = **identical on every metric** (turns 203, users 61, cost $6.1909, latency 7.5/21.5s, intents, prev 5/$0.3278) — guaranteed by both calling the same `normalizeAll`+`aggregate`. Recommend 1 more round for formality. |
 | Branch + base commit | `feat/analytics-people-foundation` @ `2273293` (WP-00/01/10/11 committed; WP-10 hardening + spikes uncommitted in tree) |
 | Verified architecture | Architecture map above + Langfuse `/api/public/traces` shape confirmed from `langfuse-core` types (`TraceWithDetails`: trace-level `latency` s, `totalCost` USD, `userId`, `sessionId`, `input`, `metadata`, `tags`; query params `fromTimestamp`/`toTimestamp`, paginated `page`/`meta.totalPages`). |
 | Changed files | No feature/runtime code. WP-10: `src/analytics/langfuse.ts`, `test-cases/analytics-fixture.json`, `scripts/insight-report.mjs`. WP-11: `src/analytics/redact.ts`, `src/analytics/report.ts`, `test/{redact,report}.test.ts`. Plus `test/{holidays,precache,directory,analytics}.test.ts`, `docs/implementation/*`, `package.json`. |
