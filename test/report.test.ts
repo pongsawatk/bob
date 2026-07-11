@@ -63,10 +63,23 @@ test("validateAnalysis: owner null is allowed", () => {
   assert.equal(validateAnalysis({ ...good, recommendations: [{ ...good.recommendations[0]!, owner: null }] }, ctx).ok, true);
 });
 
-test("sampleEvidence: redacts input and assigns E-ids", () => {
-  const ev = sampleEvidence([{ id: "t1", input: "ส่งเมล a@b.com", metadata: { category: "HR" } }], ["t1"]);
+test("sampleEvidence: masks email + phone + known name on the real appendix path", () => {
+  const ev = sampleEvidence(
+    [{ id: "t1", input: "ส่งเมล a@b.com โทร 0812345678 ถาม สมชาย", metadata: { category: "HR" } }],
+    ["t1"],
+    { names: ["สมชาย"] }
+  );
   assert.equal(ev[0]!.id, "E1");
   assert.match(ev[0]!.text, /\[email\]/);
+  assert.match(ev[0]!.text, /\[phone\]/);
+  assert.match(ev[0]!.text, /\[name\]/);
+  assert.doesNotMatch(ev[0]!.text, /a@b\.com|0812345678|สมชาย/); // no raw PII survives
+});
+
+test("renderReport: empty previous window shows N/A, not 0", () => {
+  const out = renderReport({ current: mr({ turns: 203 }), previous: mr({ turns: 0 }), analysis: null, samples });
+  assert.match(out, /turns \| 203 \| N\/A \| N\/A/);
+  assert.doesNotMatch(out, /turns \| 203 \| 0 \|/);
 });
 
 test("renderReport: full report — 6 sections, priority-sorted recs, evidence refs", () => {

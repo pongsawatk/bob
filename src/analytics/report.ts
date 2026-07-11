@@ -184,16 +184,20 @@ export function renderReport(opts: RenderOpts): string {
   else L.push(notice);
 
   L.push(`\n## 2. ตัวเลขหลัก vs ช่วงก่อนหน้า`);
+  // A previous window with zero turns = no data to compare against → show N/A, not 0.
+  const prevEmpty = p.turns === 0;
+  const pv = (s: string) => (prevEmpty ? "N/A" : s);
+  const dv = (cur: number, prev: number) => (prevEmpty ? "N/A" : arrow(cur, prev));
   L.push(`| metric | current | prev | Δ |`);
   L.push(`|---|--:|--:|--:|`);
-  L.push(`| turns | ${c.turns} | ${p.turns} | ${arrow(c.turns, p.turns)} |`);
-  L.push(`| unique users | ${c.uniqueUsers} | ${p.uniqueUsers} | ${arrow(c.uniqueUsers, p.uniqueUsers)} |`);
-  L.push(`| repeat users (≥2d) | ${c.repeatUsers} (${pct(c.repeatUserRate)}) | ${p.repeatUsers} (${pct(p.repeatUserRate)}) | ${arrow(c.repeatUsers, p.repeatUsers)} |`);
-  L.push(`| one-shot rate | ${pct(c.oneShotRate)} | ${pct(p.oneShotRate)} | — |`);
-  L.push(`| UNKNOWN turns | ${c.unknownTurns} | ${p.unknownTurns} | ${arrow(c.unknownTurns, p.unknownTurns)} |`);
-  L.push(`| truncated | ${c.truncatedTurns} | ${p.truncatedTurns} | ${arrow(c.truncatedTurns, p.truncatedTurns)} |`);
-  L.push(`| latency p50 / p95 | ${sec(c.latencyP50Ms)} / ${sec(c.latencyP95Ms)} | ${sec(p.latencyP50Ms)} / ${sec(p.latencyP95Ms)} | — |`);
-  L.push(`| cost | ${usd(c.costUsd)} | ${usd(p.costUsd)} | — |`);
+  L.push(`| turns | ${c.turns} | ${pv(String(p.turns))} | ${dv(c.turns, p.turns)} |`);
+  L.push(`| unique users | ${c.uniqueUsers} | ${pv(String(p.uniqueUsers))} | ${dv(c.uniqueUsers, p.uniqueUsers)} |`);
+  L.push(`| repeat users (≥2d) | ${c.repeatUsers} (${pct(c.repeatUserRate)}) | ${pv(`${p.repeatUsers} (${pct(p.repeatUserRate)})`)} | ${dv(c.repeatUsers, p.repeatUsers)} |`);
+  L.push(`| one-shot rate | ${pct(c.oneShotRate)} | ${pv(pct(p.oneShotRate))} | — |`);
+  L.push(`| UNKNOWN turns | ${c.unknownTurns} | ${pv(String(p.unknownTurns))} | ${dv(c.unknownTurns, p.unknownTurns)} |`);
+  L.push(`| truncated | ${c.truncatedTurns} | ${pv(String(p.truncatedTurns))} | ${dv(c.truncatedTurns, p.truncatedTurns)} |`);
+  L.push(`| latency p50 / p95 | ${sec(c.latencyP50Ms)} / ${sec(c.latencyP95Ms)} | ${pv(`${sec(p.latencyP50Ms)} / ${sec(p.latencyP95Ms)}`)} | — |`);
+  L.push(`| cost | ${usd(c.costUsd)} | ${pv(usd(p.costUsd))} | — |`);
 
   L.push(`\n## 3. Top topics ตาม intent`);
   if (analysis && analysis.topTopics.length) analysis.topTopics.forEach((t) => L.push(`- **${t.intent}** — ${t.topic}${ev(t.evidenceIds)}`));

@@ -25,7 +25,8 @@
 12. recommendation.status: "proposed" เสมอ
 13. สร้าง recommendation ไม่เกิน 8 ข้อ เรียงตาม priority (P0>P1>P2) แล้ว impact, confidence, effort
 14. confidence: high = evidence ตรงและข้อมูลครบ | medium = มี evidence แต่มีข้อจำกัด | low = evidence น้อยหรือ data quality จำกัด
-15. ตอบเป็น JSON ที่ valid เท่านั้น: ไม่มี Markdown, ไม่มี code fence, ไม่มีข้อความก่อน/หลัง JSON, ใช้ double quotes, ห้าม trailing comma
+15. ห้ามเสนอ target ตัวเลข (เช่น "latency < 15s"), ชื่อ solution เฉพาะ (เช่น ระบบ/เครื่องมือ), หรือสาเหตุที่ไม่มีหลักฐานใน Input หาก evidence จำกัด ให้ตั้ง recommendation เป็นงาน "ตรวจสอบ/วัดผล (investigate)" ด้วย confidence=low ก่อนฟันธงวิธีแก้
+16. ตอบเป็น JSON ที่ valid เท่านั้น: ไม่มี Markdown, ไม่มี code fence, ไม่มีข้อความก่อน/หลัง JSON, ใช้ double quotes, ห้าม trailing comma
 
 ## Output Schema (ตอบตามนี้เป๊ะ)
 {
