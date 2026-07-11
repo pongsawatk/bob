@@ -53,7 +53,7 @@ Date: 2026-07-11 · Branch `main` @ `ab65c7c` · Node ≥20, ESM, TypeScript, de
 | Field | Value |
 |---|---|
 | Current Work Package | `WP-11 Privacy & Report Schema` — **complete** (redaction + schema/validation + evidence mapping + 6-section renderer). Next = `WP-12` (**blocked on G1**) |
-| Gate / approval | G0 **Pending**. G1: spikes **#1 Langfuse + #4 AAD PASSED** (agent, read-only); **#2 Vercel / #3 Teams drafted, PENDING Jor** (see `docs/implementation/G1-spikes.md`). Others Pending. |
+| Gate / approval | G0 **Pending**. G1: spikes **#1 Langfuse, #2 Vercel duration, #4 AAD all RESOLVED**; **#3 Teams delivery PENDING Jor** (see `docs/implementation/G1-spikes.md`). Others Pending. |
 | Branch + base commit | `feat/analytics-people-foundation` @ `2273293` (WP-00/01/10/11 committed; WP-10 hardening + spikes uncommitted in tree) |
 | Verified architecture | Architecture map above + Langfuse `/api/public/traces` shape confirmed from `langfuse-core` types (`TraceWithDetails`: trace-level `latency` s, `totalCost` USD, `userId`, `sessionId`, `input`, `metadata`, `tags`; query params `fromTimestamp`/`toTimestamp`, paginated `page`/`meta.totalPages`). |
 | Changed files | No feature/runtime code. WP-10: `src/analytics/langfuse.ts`, `test-cases/analytics-fixture.json`, `scripts/insight-report.mjs`. WP-11: `src/analytics/redact.ts`, `src/analytics/report.ts`, `test/{redact,report}.test.ts`. Plus `test/{holidays,precache,directory,analytics}.test.ts`, `docs/implementation/*`, `package.json`. |
