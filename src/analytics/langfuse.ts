@@ -251,6 +251,46 @@ type FetchLike = (url: string, init?: { headers?: Record<string, string> }) => P
   json: () => Promise<unknown>;
 }>;
 
+export interface TracePage {
+  data: RawTrace[];
+  totalPages: number;
+}
+
+/** Fetch ONE page of traces (with 5xx/429 backoff). The resumable job fetches page by
+ *  page so it can checkpoint + yield before the ~58s invocation cap (WP-12). */
+export async function fetchTracesPage(
+  creds: LangfuseCreds,
+  window: Window,
+  page: number,
+  opts: { fetchImpl?: FetchLike; pageLimit?: number; maxAttempts?: number } = {}
+): Promise<TracePage> {
+  const f = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  const auth = "Basic " + Buffer.from(`${creds.publicKey}:${creds.secretKey}`).toString("base64");
+  const host = creds.host.replace(/\/$/, "");
+  const from = new Date(window.fromMs).toISOString();
+  const to = new Date(window.toMs).toISOString();
+  const limit = opts.pageLimit ?? 100;
+  const maxAttempts = opts.maxAttempts ?? 5;
+  const url =
+    `${host}/api/public/traces?limit=${limit}&page=${page}` +
+    `&fromTimestamp=${encodeURIComponent(from)}&toTimestamp=${encodeURIComponent(to)}`;
+
+  for (let attempt = 1; ; attempt++) {
+    const res = await f(url, { headers: { Authorization: auth } });
+    if (res.ok) {
+      const body = (await res.json()) as { data?: RawTrace[]; meta?: { totalPages?: number } };
+      return { data: body.data ?? [], totalPages: body.meta?.totalPages ?? 1 };
+    }
+    const retryable = res.status >= 500 || res.status === 429;
+    if (retryable && attempt < maxAttempts) {
+      const retryAfter = Number(res.headers?.get?.("retry-after")) || 0;
+      await new Promise((r) => setTimeout(r, retryAfter > 0 ? retryAfter * 1000 : 1500 * attempt));
+      continue;
+    }
+    throw new Error(`GET /traces ${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`);
+  }
+}
+
 /** Paginated GET /api/public/traces over a window. Retries 5xx AND 429 (the traces
  *  endpoint is rate-limited — confirmed by G1 spike), honoring Retry-After. Use the
  *  max page size (100) to minimize request count against that limit. */

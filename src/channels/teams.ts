@@ -12,6 +12,8 @@ import { saveConvRef } from "./convref.js";
 import { getRedis } from "../store/redis.js";
 import { checkRateLimit } from "./ratelimit.js";
 import { alertError } from "../obs/alert.js";
+import { parseInsightCommand, handleInsightCommand } from "./insight.js";
+import { insightEnabled } from "../analytics/queue.js";
 import { env } from "../env.js";
 
 // First message BOB sends when a user installs it (proactive first contact).
@@ -274,6 +276,18 @@ export async function handleTeamsRequest(
     if (/^\/refresh\b/i.test(message)) {
       await handleRefreshCommand(ctx);
       return;
+    }
+
+    // Admin command: /insight analytics (WP-12). Inert unless INSIGHT_ENABLED=1 — when
+    // disabled, the message falls through to the normal pipeline (feature not launched).
+    if (insightEnabled() && /^\/insight(-status)?\b/i.test(message)) {
+      const cmd = parseInsightCommand(message);
+      if (cmd) {
+        const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
+        const email = await resolveEmail(ctx, aadId);
+        await ctx.sendActivity(await handleInsightCommand(cmd, { aadObjectId: aadId, email }));
+        return;
+      }
     }
 
     // Self-service: anyone can reset their own conversation memory.

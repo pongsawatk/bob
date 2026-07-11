@@ -64,4 +64,14 @@ export const env = {
   // Shared secret the Vercel cron sends as `Authorization: Bearer <CRON_SECRET>`.
   // Endpoint refuses to run without a match (nobody can trigger a mass DM by URL).
   CRON_SECRET: opt("CRON_SECRET"),
+
+  // ── Continuous Improvement Analytics — /insight (WP-12) ──────────────
+  // ALL default off/empty. The feature is completely inert until INSIGHT_ENABLED=1
+  // AND the QStash + group envs are set. Nothing here throws when unset.
+  INSIGHT_ENABLED: opt("INSIGHT_ENABLED"),                 // "1" arms /insight + workers
+  INSIGHT_ADMIN_GROUP_ID: opt("INSIGHT_ADMIN_GROUP_ID"),   // AAD security group object id
+  INSIGHT_WORKER_URL: opt("INSIGHT_WORKER_URL"),           // public URL of /api/insight/worker
+  QSTASH_TOKEN: opt("QSTASH_TOKEN"),
+  QSTASH_CURRENT_SIGNING_KEY: opt("QSTASH_CURRENT_SIGNING_KEY"),
+  QSTASH_NEXT_SIGNING_KEY: opt("QSTASH_NEXT_SIGNING_KEY"),
 } as const;
