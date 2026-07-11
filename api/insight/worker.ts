@@ -127,14 +127,21 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
     const llm: LlmCall = async (userContent) =>
       (await callLLM({ model, systemPrompt: sys, messages: [{ role: "user", content: userContent }], maxTokens: 2000, temperature: 0.3 })).text;
     // Deadline-aware: won't start an attempt that can't finish in budget → numbers-only.
-    const { analysis } = await analyzeWithRetry(input, llm, { maxAttempts: 2, deadline, perAttemptMs: 22_000 });
+    const { analysis, errors: analyzeErrors } = await analyzeWithRetry(input, llm, { maxAttempts: 2, deadline, perAttemptMs: 22_000 });
 
     // Render only the leak-checked subset buildAnalysisInput kept (appendix safety).
     const report = renderReport({ current: cur, previous: prev, analysis, samples: input.samples });
     const r = getRedis();
     const reportRef = reportRedisKey(job.jobId);
     if (r) await r.set(reportRef, report, { ex: 60 * 60 * 24 });
-    await store.update(job.jobId, { stage: "deliver", reportRef, status: analysis ? "running" : "partial" });
+    await store.update(job.jobId, {
+      stage: "deliver",
+      reportRef,
+      status: analysis ? "running" : "partial",
+      // Surface WHY the AI section fell back (deadline / llm error / schema invalid) +
+      // the model used — visible via /insight-status.
+      error: analysis ? undefined : `analyze[${model}] fallback: ${analyzeErrors.slice(0, 2).join(" | ")}`.slice(0, 250),
+    });
     await enqueueStage({ jobId: job.jobId, stage: "deliver" });
     return;
   }
