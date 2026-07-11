@@ -11,6 +11,7 @@ import { getActiveDirectory, getDirectoryNames } from "./directory.js";
 import { extractIntent, INTENT_SYSTEM_PROMPT, type LlmCall } from "./intent/extract.js";
 import { evaluatePolicy } from "./policy/gate.js";
 import { retrieve, tagMapFromDirectory, type TagMap } from "./retrieval/search.js";
+import { employmentPolicyFromEnv, filterServable, type EmploymentPolicy } from "./policy/employment.js";
 import { compose, templateFallback } from "./responder/compose.js";
 import { createAuditLog, type AuditLog } from "./audit/log.js";
 import { DIRECTORY_INTENTS, type PolicyOutcome, type SubIntent } from "./pcTypes.js";
@@ -36,6 +37,8 @@ export interface PeopleDeps {
   /** approved tags override; when omitted, derived from the directory's ownership
    *  column (empty until HR fills it → tag intents stay "coming soon"). */
   tags?: TagMap;
+  /** employment-status gate; empty/omitted → serve everyone (inert). */
+  employmentPolicy?: EmploymentPolicy;
   audit?: AuditLog;
   now?: Date;
 }
@@ -66,9 +69,9 @@ export async function handlePeopleQuery(query: string, deps: PeopleDeps): Promis
   if (decision.outcome === "REFUSE") return finish(MSG.refuse);
   if (decision.outcome === "CLARIFY" || decision.outcome === "UNABLE_TO_DETERMINE") return finish(MSG.clarify, 0, true);
 
-  // ALLOW — run retrieval over the live directory. Tags come from an explicit
-  // override or are derived from the directory's ownership column (empty → dark).
-  const directory = await deps.getDirectory();
+  // ALLOW — run retrieval over the live directory, minus anyone the employment
+  // gate excludes (inert until HR fills the status column + configures it).
+  const directory = filterServable(await deps.getDirectory(), deps.employmentPolicy ?? {});
   const tags = deps.tags ?? tagMapFromDirectory(directory);
   const response = retrieve({ intent, directory, tags, now });
 
@@ -119,6 +122,7 @@ export function defaultPeopleDeps(): PeopleDeps {
     getDirectory: getActiveDirectory,
     getKnownNames: getDirectoryNames,
     // tags omitted → derived from the directory ownership column each request.
+    employmentPolicy: employmentPolicyFromEnv(env),
     audit: sharedAudit,
   };
 }

@@ -83,4 +83,8 @@ export const env = {
   // lookup) over the For-All registry; served via the admin-only /people command
   // (reuses INSIGHT_ADMIN_GROUP_ID). Tag intents stay dark until G0.
   PEOPLE_ENABLED: opt("PEOPLE_ENABLED"),
+  // employment-status gate (both empty → no filtering). Set when HR fills the
+  // status column: allowlist of servable statuses and/or a denylist.
+  PEOPLE_ACTIVE_STATUSES: opt("PEOPLE_ACTIVE_STATUSES"),
+  PEOPLE_EXCLUDED_STATUSES: opt("PEOPLE_EXCLUDED_STATUSES"),
 } as const;
