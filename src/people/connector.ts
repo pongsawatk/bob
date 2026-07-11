@@ -10,7 +10,7 @@ import { env } from "../env.js";
 import { getActiveDirectory, getDirectoryNames } from "./directory.js";
 import { extractIntent, INTENT_SYSTEM_PROMPT, type LlmCall } from "./intent/extract.js";
 import { evaluatePolicy } from "./policy/gate.js";
-import { retrieve, type TagMap } from "./retrieval/search.js";
+import { retrieve, tagMapFromDirectory, type TagMap } from "./retrieval/search.js";
 import { compose, templateFallback } from "./responder/compose.js";
 import { createAuditLog, type AuditLog } from "./audit/log.js";
 import { DIRECTORY_INTENTS, type PolicyOutcome, type SubIntent } from "./pcTypes.js";
@@ -33,8 +33,9 @@ export interface PeopleDeps {
   responderLlm: LlmCall;
   getDirectory: () => Promise<ProfileMap>;
   getKnownNames: () => Promise<string[]>;
-  /** approved tags — empty until G0. */
-  tags: TagMap;
+  /** approved tags override; when omitted, derived from the directory's ownership
+   *  column (empty until HR fills it → tag intents stay "coming soon"). */
+  tags?: TagMap;
   audit?: AuditLog;
   now?: Date;
 }
@@ -65,9 +66,11 @@ export async function handlePeopleQuery(query: string, deps: PeopleDeps): Promis
   if (decision.outcome === "REFUSE") return finish(MSG.refuse);
   if (decision.outcome === "CLARIFY" || decision.outcome === "UNABLE_TO_DETERMINE") return finish(MSG.clarify, 0, true);
 
-  // ALLOW — run retrieval over the live directory (+ empty tags in Wave-1).
+  // ALLOW — run retrieval over the live directory. Tags come from an explicit
+  // override or are derived from the directory's ownership column (empty → dark).
   const directory = await deps.getDirectory();
-  const response = retrieve({ intent, directory, tags: deps.tags, now });
+  const tags = deps.tags ?? tagMapFromDirectory(directory);
+  const response = retrieve({ intent, directory, tags, now });
 
   if (response.results.length === 0) {
     // Tag intents have no data yet → signal it's coming; directory intents just
@@ -115,7 +118,7 @@ export function defaultPeopleDeps(): PeopleDeps {
     responderLlm,
     getDirectory: getActiveDirectory,
     getKnownNames: getDirectoryNames,
-    tags: {},
+    // tags omitted → derived from the directory ownership column each request.
     audit: sharedAudit,
   };
 }

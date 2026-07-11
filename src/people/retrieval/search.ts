@@ -27,6 +27,18 @@ export interface TagInfo {
 /** Approved tags keyed by email — from the G0 source; empty until approved. */
 export type TagMap = Record<string, TagInfo>;
 
+/** Build the TagMap from the directory itself (the G0 ownership column lives in the
+ *  same HR sheet). Only profiles that actually carry tags get an entry, so an empty
+ *  column yields an empty map and tag intents stay dark. expertise/openToDiscuss are
+ *  Phase-next (self-service) and not sourced here yet. */
+export function tagMapFromDirectory(dir: ProfileMap): TagMap {
+  const out: TagMap = {};
+  for (const [email, p] of Object.entries(dir)) {
+    if (p.ownershipTags && p.ownershipTags.length) out[email] = { ownershipTags: p.ownershipTags };
+  }
+  return out;
+}
+
 export interface RetrieveInput {
   intent: IntentResult;
   directory: ProfileMap;

@@ -24,8 +24,20 @@ export interface Profile {
   /** ISO date (converted from Thai Buddhist year in the sheet). */
   startDate?: string;
   supervisor?: string;
-  /** Not in the sheet yet — HR was asked to add these columns. */
+  /** G0 columns HR adds to the sheet. employmentType = employment status;
+   *  ownershipTags = product/thing this person officially owns (comma/newline
+   *  separated in the cell). Both undefined until the column exists + is filled. */
   employmentType?: string;
+  ownershipTags?: string[];
+}
+
+/** Split a tag cell (comma / semicolon / newline / Thai comma) into clean tags. */
+function splitTags(v: unknown): string[] | undefined {
+  const parts = String(v ?? "")
+    .split(/[,;\n、]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length ? parts : undefined;
 }
 
 const REDIS_KEY = "bob:directory";
@@ -118,7 +130,8 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
   const iRank = col(/^rank$/i);
   const iStart = col(/วันที่เริ่ม/);
   const iSup = col(/supervisor/i);
-  const iEmpType = col(/สถานะการจ้าง|employment/i); // future column (asked from HR)
+  const iEmpType = col(/สถานะการจ้าง|employment/i); // G0 column (HR)
+  const iOwn = col(/ownership|product\s*owner|ผู้รับผิดชอบ|รับผิดชอบ|ดูแลผลิตภัณฑ์/i); // G0 column (HR)
 
   const active: Record<string, Profile> = {};
   const resigned: string[] = [];
@@ -143,6 +156,7 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
       startDate: parseThaiDate(r[iStart]),
       supervisor: clean(r[iSup]) || undefined,
       employmentType: iEmpType >= 0 ? clean(r[iEmpType]) || undefined : undefined,
+      ownershipTags: iOwn >= 0 ? splitTags(r[iOwn]) : undefined,
     };
   }
   return { active, resigned };
