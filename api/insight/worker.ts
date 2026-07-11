@@ -125,7 +125,8 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
       (await callLLM({ model: env.MODEL_ASYNC, systemPrompt: sys, messages: [{ role: "user", content: userContent }], maxTokens: 2000, temperature: 0.3 })).text;
     const { analysis } = await analyzeWithRetry(input, llm);
 
-    const report = renderReport({ current: cur, previous: prev, analysis, samples });
+    // Render only the leak-checked subset buildAnalysisInput kept (appendix safety).
+    const report = renderReport({ current: cur, previous: prev, analysis, samples: input.samples });
     const r = getRedis();
     const reportRef = reportRedisKey(job.jobId);
     if (r) await r.set(reportRef, report, { ex: 60 * 60 * 24 });

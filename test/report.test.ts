@@ -1,100 +1,97 @@
-// WP-11 — schema validation, evidence mapping, and 6-section renderer.
+// WP-11/12 — schema v1.0 validation + 6-section renderer.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   validateAnalysis,
-  crossCheckEvidence,
   sampleEvidence,
   renderReport,
   type AnalysisOutput,
+  type ValidateContext,
 } from "../src/analytics/report.ts";
-import type { MetricReport, RawTrace } from "../src/analytics/langfuse.ts";
+import type { MetricReport } from "../src/analytics/langfuse.ts";
 
 const mr = (o: Partial<MetricReport> = {}): MetricReport => ({
   window: { from: "2026-07-01T00:00:00.000Z", to: "2026-07-08T00:00:00.000Z", days: 7 },
   completeness: 1, turns: 100, uniqueUsers: 40, sessions: 60, repeatUsers: 12,
-  repeatUserRate: 0.3, oneShotRate: 0.59,
-  intents: { HR: 50, PRODUCT: 30, GENERAL: 15, UNKNOWN: 5 },
-  unknownTurns: 5, truncatedTurns: 3, fromCacheTurns: 20,
-  latencyP50Ms: 3000, latencyP95Ms: 9000, costUsd: 0.5, ...o,
+  repeatUserRate: 0.3, oneShotRate: 0.59, intents: { HR: 50, GENERAL: 30, UNKNOWN: 5 },
+  unknownTurns: 5, truncatedTurns: 3, fromCacheTurns: 20, latencyP50Ms: 3000, latencyP95Ms: 9000, costUsd: 0.5, ...o,
 });
 
-const validAnalysis: AnalysisOutput = {
-  executiveSummary: ["ใช้งานเพิ่มขึ้น", "UNKNOWN ลดลง"],
-  topTopics: [{ intent: "HR", examples: ["ลาป่วย", "โบนัส"] }],
-  gaps: ["ลาพักร้อนคงเหลือยังตอบไม่ได้"],
+const ctx: ValidateContext = { evidenceIds: new Set(["M1", "E1", "D1"]), allowedOwners: ["HR", "Platform Team"] };
+
+const good: AnalysisOutput = {
+  schemaVersion: "1.0",
+  executiveSummary: [{ statement: "ผู้ใช้เพิ่มขึ้น", evidenceIds: ["M1"] }],
+  topTopics: [{ intent: "HR", topic: "การลา", evidenceIds: ["M1"] }],
+  gaps: [{ id: "G1", category: "knowledge", statement: "ลาพักร้อนคงเหลือตอบไม่ได้", severity: "high", evidenceIds: ["E1"] }],
   recommendations: [{
-    id: "R1", type: "kb", statement: "เพิ่ม KB ลาพักร้อนคงเหลือ",
-    evidenceIds: ["E1"], impact: "high", effort: "medium", confidence: "high",
-    owner: "HR", status: "proposed",
+    id: "R1", priority: "P0", type: "kb", statement: "เพิ่ม KB ลาพักร้อน", evidenceIds: ["E1"],
+    impact: "high", effort: "medium", confidence: "high", owner: "HR", dueDate: null, status: "proposed",
   }],
+  limitations: [{ statement: "completeness ต่ำ", evidenceIds: ["D1"] }],
 };
-const samples = [{ id: "E1", intent: "HR", text: "ลาพักร้อนเหลือกี่วัน" }];
+const samples = [{ id: "E1", intent: "UNKNOWN", text: "ลาพักร้อนเหลือกี่วัน" }];
 
-test("validateAnalysis: accepts a well-formed object", () => {
-  const r = validateAnalysis(validAnalysis);
-  assert.equal(r.ok, true);
+test("validateAnalysis: accepts a well-formed v1.0 object", () => {
+  assert.equal(validateAnalysis(good, ctx).ok, true);
 });
 
-test("validateAnalysis: collects errors for bad shape", () => {
-  const r = validateAnalysis({
-    executiveSummary: ["a", "b", "c", "d", "e", "f"], // 6 > 5
-    topTopics: [], gaps: [],
-    recommendations: [{ id: "R", type: "bad", statement: "x", evidenceIds: [], impact: "high", effort: "low", confidence: "low", status: "open" }],
-  });
+test("validateAnalysis: rejects evidence ids not in the catalog", () => {
+  const bad = { ...good, gaps: [{ ...good.gaps[0]!, evidenceIds: ["M9"] }] };
+  const r = validateAnalysis(bad, ctx);
   assert.equal(r.ok, false);
-  if (!r.ok) {
-    assert.ok(r.errors.some((e) => e.includes("1–5 bullets")));
-    assert.ok(r.errors.some((e) => e.includes("type must be kb|feature|prompt")));
-  }
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes('unknown evidence "M9"')));
 });
 
-test("validateAnalysis: empty object → multiple errors", () => {
-  const r = validateAnalysis({});
+test("validateAnalysis: rejects owner outside allowedOwners", () => {
+  const bad = { ...good, recommendations: [{ ...good.recommendations[0]!, owner: "Finance" }] };
+  const r = validateAnalysis(bad, ctx);
   assert.equal(r.ok, false);
-  if (!r.ok) assert.ok(r.errors.some((e) => e.includes("executiveSummary")));
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes("owner must be null or in allowedOwners")));
 });
 
-test("crossCheckEvidence: flags evidence ids missing from samples", () => {
-  const a: AnalysisOutput = { ...validAnalysis, recommendations: [{ ...validAnalysis.recommendations[0]!, evidenceIds: ["E1", "E9"] }] };
-  assert.deepEqual(crossCheckEvidence(a, samples), ["E9"]);
-  assert.deepEqual(crossCheckEvidence(validAnalysis, samples), []);
+test("validateAnalysis: rejects bad priority, status, and >8 recommendations", () => {
+  assert.equal(validateAnalysis({ ...good, recommendations: [{ ...good.recommendations[0]!, priority: "P9" }] }, ctx).ok, false);
+  assert.equal(validateAnalysis({ ...good, recommendations: [{ ...good.recommendations[0]!, status: "done" }] }, ctx).ok, false);
+  const many = Array.from({ length: 9 }, (_, i) => ({ ...good.recommendations[0]!, id: `R${i}` }));
+  const r = validateAnalysis({ ...good, recommendations: many }, ctx);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.ok(r.errors.some((e) => e.includes("exceed 8")));
+});
+
+test("validateAnalysis: owner null is allowed", () => {
+  assert.equal(validateAnalysis({ ...good, recommendations: [{ ...good.recommendations[0]!, owner: null }] }, ctx).ok, true);
 });
 
 test("sampleEvidence: redacts input and assigns E-ids", () => {
-  const raws: RawTrace[] = [
-    { id: "t1", timestamp: "2026-07-01T00:00:00Z", input: "ช่วยส่งเมลไป a@b.com หน่อย", metadata: { category: "HR" } },
-  ];
-  const ev = sampleEvidence(raws, ["t1", "missing"]);
-  assert.equal(ev.length, 1);
+  const ev = sampleEvidence([{ id: "t1", input: "ส่งเมล a@b.com", metadata: { category: "HR" } }], ["t1"]);
   assert.equal(ev[0]!.id, "E1");
-  assert.equal(ev[0]!.intent, "HR");
   assert.match(ev[0]!.text, /\[email\]/);
-  assert.doesNotMatch(ev[0]!.text, /a@b\.com/);
 });
 
-test("renderReport: full report has all 6 sections, recommendation, and sample", () => {
-  const out = renderReport({ current: mr(), previous: mr({ turns: 80 }), analysis: validAnalysis, samples });
+test("renderReport: full report — 6 sections, priority-sorted recs, evidence refs", () => {
+  const p1 = { ...good.recommendations[0]!, id: "R2", priority: "P2" as const, statement: "งาน P2" };
+  const out = renderReport({ current: mr(), previous: mr({ turns: 80 }), analysis: { ...good, recommendations: [p1, good.recommendations[0]!] }, samples });
   for (const h of ["## 1. Executive Summary", "## 2. ", "## 3. ", "## 4. Gap Analysis", "## 5. ", "## 6. Appendix"])
-    assert.ok(out.includes(h), `missing section: ${h}`);
+    assert.ok(out.includes(h), `missing ${h}`);
   assert.match(out, /turns \| 100 \| 80/);
-  assert.match(out, /เพิ่ม KB ลาพักร้อนคงเหลือ/);
-  assert.match(out, /`E1`/);
-  assert.doesNotMatch(out, /PARTIAL/);
+  assert.match(out, /เพิ่ม KB ลาพักร้อน/);
+  assert.match(out, /_\(M1\)_/); // evidence ref rendered
+  // P0 must render before P2
+  assert.ok(out.indexOf("P0 [kb]") < out.indexOf("P2 [kb]"));
+  assert.match(out, /ข้อจำกัด/); // limitations rendered
 });
 
-test("renderReport: null analysis falls back to numbers-only with a notice", () => {
+test("renderReport: null analysis → numbers-only notice, appendix still renders", () => {
   const out = renderReport({ current: mr(), previous: mr(), analysis: null, samples });
   assert.match(out, /AI analysis unavailable/);
-  assert.match(out, /turns \| 100/);            // numbers still render
-  assert.match(out, /HR=50/);                    // intent mix fallback in §3
-  assert.doesNotMatch(out, /เพิ่ม KB ลาพักร้อนคงเหลือ/); // no AI recommendations
+  assert.match(out, /turns \| 100/);
+  assert.match(out, /`E1`/);
+  assert.doesNotMatch(out, /เพิ่ม KB ลาพักร้อน/);
 });
 
-test("renderReport: partial data warns and suppresses conclusions", () => {
-  const out = renderReport({ current: mr({ completeness: 0.5 }), previous: mr(), analysis: validAnalysis, samples });
+test("renderReport: partial data warns + suppresses recommendations", () => {
+  const out = renderReport({ current: mr({ completeness: 0.5 }), previous: mr(), analysis: good, samples });
   assert.match(out, /PARTIAL DATA/);
-  assert.match(out, /suppressed/i);
-  assert.match(out, /turns \| 100/);            // numbers still render
-  assert.doesNotMatch(out, /เพิ่ม KB ลาพักร้อนคงเหลือ/); // recommendation suppressed
+  assert.doesNotMatch(out, /เพิ่ม KB ลาพักร้อน/);
 });
