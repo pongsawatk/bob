@@ -21,6 +21,7 @@ import {
   type NormalizedTurn, type RawTrace,
 } from "../../src/analytics/langfuse.js";
 import { redact } from "../../src/analytics/redact.js";
+import { getDirectoryNames } from "../../src/people/directory.js";
 import { buildAnalysisInput, analyzeWithRetry, type LlmCall } from "../../src/analytics/analyze.js";
 import { renderReport, type EvidenceSample } from "../../src/analytics/report.js";
 import { reportRedisKey } from "../../src/analytics/reportLink.js";
@@ -82,11 +83,12 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
 
   if (stage === "fetch") {
     const state = await loadState(job.stateRef);
+    const names = await getDirectoryNames(); // for masking employee names in samples
     let cursor: FetchCursor = job.cursor ?? { page: 1, totalPages: null, fetched: 0 };
     for (;;) {
       const pg = await fetchTracesPage(creds, current, cursor.page);
       state.turns.push(...normalizeAll(pg.data));
-      collectSamples(pg.data, state); // redacted candidates only
+      collectSamples(pg.data, state, names); // redacted candidates only
       const decision = nextFetchStep(cursor, { page: cursor.page, totalPages: pg.totalPages, count: pg.data.length }, deadline);
       cursor = decision.cursor;
       await saveState(job.stateRef, state);
@@ -148,15 +150,14 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
 }
 
 /** Add redacted candidate questions (UNKNOWN / truncated turns) for the appendix.
- *  NOTE: structured PII is masked; name-level masking needs a directory-names list
- *  (follow-up) before the deliver stage is activated. */
-function collectSamples(raws: RawTrace[], state: StageState): void {
+ *  Structured PII (email/phone/id/token) + known employee names are both masked. */
+function collectSamples(raws: RawTrace[], state: StageState, names: string[]): void {
   if (state.samples.length >= 20) return;
   for (const t of normalizeAll(raws)) {
     if (state.samples.length >= 20) break;
     if (t.intent === "UNKNOWN" || t.truncated) {
       const raw = raws.find((r) => r.id === t.id);
-      if (raw) state.samples.push({ intent: t.intent, text: redact(raw.input).text });
+      if (raw) state.samples.push({ intent: t.intent, text: redact(raw.input, { names }).text });
     }
   }
 }

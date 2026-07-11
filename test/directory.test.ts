@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 process.env.OPENROUTER_API_KEY ??= "test-dummy";
-const { parseRows, renderProfileBlock } = await import("../src/people/directory.ts");
+const { parseRows, renderProfileBlock, namesFromProfiles } = await import("../src/people/directory.ts");
 
 // Header columns as they appear in "BOG ทะเบียนพนักงาน For All.xlsx".
 const header = [
@@ -68,4 +68,16 @@ test("renderProfileBlock: asker-only projection carries nickname + the no-leak p
   assert.match(block, /ตำแหน่ง: Developer/);
   assert.match(block, /ห้ามเปิดเผยหรือเดาข้อมูลส่วนตัวของพนักงานคนอื่น/);
   assert.doesNotMatch(block, /เริ่มงาน/); // no startDate provided → tenure line omitted (deterministic)
+});
+
+test("namesFromProfiles: collects deduped names + nicknames for redaction (drops <2 chars)", () => {
+  const names = namesFromProfiles({
+    "a@x.com": { email: "a@x.com", fullNameTh: "สมชาย ใจดี", fullNameEn: "Somchai Jaidee", nickname: "บ๊อบ" },
+    "b@x.com": { email: "b@x.com", fullNameTh: "สมชาย ใจดี", nickname: "ก" }, // dup name + 1-char nick
+  });
+  assert.ok(names.includes("สมชาย ใจดี"));
+  assert.ok(names.includes("Somchai Jaidee"));
+  assert.ok(names.includes("บ๊อบ"));
+  assert.ok(!names.includes("ก")); // length < 2 dropped
+  assert.equal(names.filter((n) => n === "สมชาย ใจดี").length, 1); // deduped
 });

@@ -210,6 +210,35 @@ export async function lookupProfile(email: string): Promise<Profile | null> {
   return mem.map[email.toLowerCase()] ?? null;
 }
 
+/** Every name + nickname in the directory — used to mask employee names in analytics
+ *  samples (redaction). Deduped, non-empty, length >= 2 (so short initials don't over-mask). */
+export function namesFromProfiles(map: Record<string, Profile>): string[] {
+  const names = new Set<string>();
+  for (const p of Object.values(map)) {
+    for (const n of [p.fullNameTh, p.fullNameEn, p.nickname]) {
+      const v = (n ?? "").trim();
+      if (v.length >= 2) names.add(v);
+    }
+  }
+  return [...names];
+}
+
+/** Directory names for redaction. Reads memory → Redis (never Graph), like lookupProfile. */
+export async function getDirectoryNames(): Promise<string[]> {
+  if (!mem || Date.now() - mem.at >= MEM_TTL_MS) {
+    const r = getRedis();
+    if (r) {
+      try {
+        const map = await r.get<Record<string, Profile>>(REDIS_KEY);
+        if (map) mem = { map, at: Date.now() };
+      } catch (err) {
+        console.error("getDirectoryNames: redis read failed:", err);
+      }
+    }
+  }
+  return mem ? namesFromProfiles(mem.map) : [];
+}
+
 /** Thai tenure string from an ISO start date, e.g. "21 ปี 1 เดือน". */
 function tenureTh(startDate: string, now = new Date()): string {
   const s = new Date(startDate + "T00:00:00+07:00");
