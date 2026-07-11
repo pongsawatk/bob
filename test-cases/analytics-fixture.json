@@ -1,0 +1,57 @@
+[
+  {
+    "id": "t1", "name": "bob-chat", "timestamp": "2026-07-01T09:00:00+07:00",
+    "userId": "usera@example.com", "sessionId": "S1", "latency": 3, "totalCost": 0.002,
+    "tags": ["teams", "HR", "llm"], "metadata": { "category": "HR", "outputTokens": 500 }
+  },
+  {
+    "id": "t2", "name": "bob-chat", "timestamp": "2026-07-01T09:05:00+07:00",
+    "userId": "usera@example.com", "sessionId": "S1", "latency": 5, "totalCost": 0.003,
+    "tags": ["teams", "HR", "llm"], "metadata": { "category": "HR", "outputTokens": 1300 }
+  },
+  {
+    "id": "t3", "name": "bob-chat", "timestamp": "2026-07-03T10:00:00+07:00",
+    "userId": "usera@example.com", "sessionId": "S2", "latency": 8, "totalCost": 0.01,
+    "tags": ["teams", "PRODUCT", "llm"], "metadata": { "category": "PRODUCT", "outputTokens": 900 }
+  },
+  {
+    "id": "t4", "name": "bob-chat", "timestamp": "2026-07-02T11:00:00+07:00",
+    "userId": "userb@example.com", "sessionId": "S3", "latency": 1, "totalCost": 0.0005,
+    "tags": ["teams", "GENERAL", "precache"], "metadata": { "category": "GENERAL", "outputTokens": 200 }
+  },
+  {
+    "id": "t5", "name": "bob-chat", "timestamp": "2026-07-02T15:00:00+07:00",
+    "userId": "userb@example.com", "sessionId": "S4", "latency": 2, "totalCost": 0.001,
+    "tags": ["teams", "UNKNOWN", "llm"], "metadata": { "category": "UNKNOWN", "outputTokens": 100 }
+  },
+  {
+    "id": "t6", "name": "bob-chat", "timestamp": "2026-07-05T08:00:00+07:00",
+    "userId": "userc@example.com", "sessionId": "S5", "latency": 4, "totalCost": 0.002,
+    "tags": ["teams", "HR", "llm"], "metadata": { "category": "HR", "outputTokens": 1300 }
+  },
+  {
+    "id": "t7", "name": "bob-chat", "timestamp": "2026-07-04T09:00:00+07:00",
+    "userId": "eval", "sessionId": "S-eval", "latency": 3, "totalCost": 0.05,
+    "tags": ["teams", "HR", "llm"], "metadata": { "category": "HR", "outputTokens": 700 }
+  },
+  {
+    "id": "t8", "name": "other-trace", "timestamp": "2026-07-04T09:30:00+07:00",
+    "userId": "userd@example.com", "sessionId": "S6", "latency": 3, "totalCost": 0.004,
+    "tags": ["teams"], "metadata": { "category": "HR", "outputTokens": 400 }
+  },
+  {
+    "id": "t1", "name": "bob-chat", "timestamp": "2026-07-01T09:00:00+07:00",
+    "userId": "usera@example.com", "sessionId": "S1", "latency": 3, "totalCost": 0.002,
+    "tags": ["teams", "HR", "llm"], "metadata": { "category": "HR", "outputTokens": 500 }
+  },
+  {
+    "id": "t10", "name": "bob-chat", "timestamp": "2026-07-06T12:00:00+07:00",
+    "userId": "usere@example.com", "sessionId": "S7", "latency": 2, "totalCost": 0.001,
+    "tags": ["teams"], "metadata": { "outputTokens": 0 }
+  },
+  {
+    "id": "t11", "name": "bob-chat", "timestamp": "2026-06-25T09:00:00+07:00",
+    "userId": "userf@example.com", "sessionId": "S8", "latency": 3, "totalCost": 0.005,
+    "tags": ["teams", "HR", "llm"], "metadata": { "category": "HR", "outputTokens": 400 }
+  }
+]

@@ -15,7 +15,9 @@
     "smoke": "node scripts/run-smoke.mjs",
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "insight:report": "tsx scripts/insight-report.mjs"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3",
