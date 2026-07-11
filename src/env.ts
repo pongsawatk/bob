@@ -77,4 +77,10 @@ export const env = {
   QSTASH_URL: opt("QSTASH_URL"),                           // region endpoint from the QStash console
   QSTASH_CURRENT_SIGNING_KEY: opt("QSTASH_CURRENT_SIGNING_KEY"),
   QSTASH_NEXT_SIGNING_KEY: opt("QSTASH_NEXT_SIGNING_KEY"),
+
+  // ── People Connector Wave-1 admin-shadow (WP-22 wiring) ──────────────
+  // Inert until PEOPLE_ENABLED=1. Directory-only intents (person/team/reporting
+  // lookup) over the For-All registry; served via the admin-only /people command
+  // (reuses INSIGHT_ADMIN_GROUP_ID). Tag intents stay dark until G0.
+  PEOPLE_ENABLED: opt("PEOPLE_ENABLED"),
 } as const;

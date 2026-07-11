@@ -14,6 +14,7 @@ import { checkRateLimit } from "./ratelimit.js";
 import { alertError } from "../obs/alert.js";
 import { parseInsightCommand, handleInsightCommand } from "./insight.js";
 import { insightEnabled } from "../analytics/queue.js";
+import { parsePeopleCommand, handlePeopleCommand, peopleEnabled } from "./people.js";
 import { env } from "../env.js";
 
 // First message BOB sends when a user installs it (proactive first contact).
@@ -291,6 +292,24 @@ export async function handleTeamsRequest(
           // Admin-only command → surface the real cause to help activation/debugging.
           console.error("/insight failed:", err);
           await ctx.sendActivity(`⚠️ /insight ผิดพลาด: ${String(err).slice(0, 300)}`);
+        }
+        return;
+      }
+    }
+
+    // Admin command: /people connector (Wave-1 shadow). Inert unless PEOPLE_ENABLED=1;
+    // when disabled the message falls through to the normal pipeline. Separate path —
+    // does not change BOB's default refuse-others behavior in normal chat.
+    if (peopleEnabled() && /^\/people\b/i.test(message)) {
+      const cmd = parsePeopleCommand(message);
+      if (cmd) {
+        const aadId = activity.from.aadObjectId ?? activity.from.id ?? "unknown";
+        const email = await resolveEmail(ctx, aadId);
+        try {
+          await ctx.sendActivity(await handlePeopleCommand(cmd, { aadObjectId: aadId, email }));
+        } catch (err) {
+          console.error("/people failed:", err);
+          await ctx.sendActivity(`⚠️ /people ผิดพลาด: ${String(err).slice(0, 300)}`);
         }
         return;
       }
