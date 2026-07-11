@@ -38,12 +38,15 @@ export async function enqueueStage(msg: QueueMessage): Promise<void> {
 }
 
 /** Verify a worker request came from QStash (upstash-signature header). Never throws;
- *  returns false on missing/invalid signature or misconfiguration → caller sends 401. */
-export async function verifyQStash(signature: string | undefined, body: string, url?: string): Promise<boolean> {
-  if (!signature) return false;
+ *  returns the reason on failure so the worker can surface it (QStash delivery logs
+ *  show the response body). The url claim is intentionally NOT checked — it's fragile
+ *  to any normalization diff, and the signature (our signing keys) already authenticates. */
+export async function verifyQStash(signature: string | undefined, body: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!signature) return { ok: false, reason: "missing upstash-signature header" };
   try {
-    return await receiver().verify({ signature, body, ...(url ? { url } : {}) });
-  } catch {
-    return false;
+    const ok = await receiver().verify({ signature, body });
+    return { ok, reason: ok ? undefined : "verify returned false" };
+  } catch (err) {
+    return { ok: false, reason: String(err).slice(0, 200) };
   }
 }

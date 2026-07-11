@@ -49,8 +49,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // QStash authenticity — verify the raw body against the signature header.
   const raw = typeof req.body === "string" ? req.body : JSON.stringify(req.body ?? {});
   const sig = req.headers["upstash-signature"];
-  const ok = await verifyQStash(Array.isArray(sig) ? sig[0] : sig, raw, env.INSIGHT_WORKER_URL || undefined);
-  if (!ok) { res.status(401).json({ error: "bad signature" }); return; }
+  const v = await verifyQStash(Array.isArray(sig) ? sig[0] : sig, raw);
+  if (!v.ok) { res.status(401).json({ error: "bad signature", reason: v.reason }); return; }
 
   const { jobId, stage } = (typeof req.body === "object" ? req.body : JSON.parse(raw)) as { jobId: string; stage: string };
   const store = new RedisJobStore();
