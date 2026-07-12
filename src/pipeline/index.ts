@@ -4,6 +4,8 @@ import { routeMessage, type Category } from "./router.js";
 import { callDomainBot } from "./domainBot.js";
 import { startTrace, flushObs } from "../obs/langfuse.js";
 import type { LLMMessage } from "../llm/openrouter.js";
+import { handlePeopleQuery, defaultPeopleDeps } from "../people/connector.js";
+import { peopleEnabled } from "../channels/people.js";
 
 export type { LLMMessage };
 
@@ -95,6 +97,42 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
     },
     metadata: { confidence: routed.confidence },
   });
+
+  // ── People Connector ───────────────────────────────────────────
+  // Person/team/reporting lookups over the For-All directory. Enabled for
+  // everyone behind PEOPLE_ENABLED (kill-switch). Separate handler — the domain
+  // bots keep their "refuse info about others" rule as defense-in-depth, so a
+  // cross-person question misrouted to HR/GENERAL still never leaks.
+  if (peopleEnabled() && routed.category === "PEOPLE") {
+    const peopleSpan = trace.span("people");
+    const tPeople = Date.now();
+    const res = await handlePeopleQuery(message, defaultPeopleDeps());
+    peopleSpan.end({ subIntent: res.subIntent, outcome: res.outcome, resultCount: res.resultCount });
+    trace.update({
+      output: res.text,
+      metadata: {
+        ...baseMeta,
+        category: "PEOPLE",
+        subIntent: res.subIntent,
+        policyOutcome: res.outcome,
+        resultCount: res.resultCount,
+        usedFallback: res.usedFallback,
+        latencyMs: Date.now() - t0,
+        coldStart,
+        timings: { peopleMs: Date.now() - tPeople },
+      },
+      tags: [channel, "PEOPLE", "llm"],
+    });
+    await flushObs();
+    return {
+      traceId,
+      category: "PEOPLE",
+      answer: res.text,
+      latencyMs: Date.now() - t0,
+      fromCache: false,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 },
+    };
+  }
 
   // ── Tier 2-4: Domain Bot ───────────────────────────────────────
   const domainSpan = trace.span("domain");

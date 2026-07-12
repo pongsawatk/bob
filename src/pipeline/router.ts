@@ -2,7 +2,7 @@ import { callLLM, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { env } from "../env.js";
 
-export type Category = "HR" | "PRODUCT" | "GENERAL" | "UNKNOWN";
+export type Category = "HR" | "PRODUCT" | "GENERAL" | "PEOPLE" | "UNKNOWN";
 
 export interface RouterResult {
   category: Category;
@@ -59,7 +59,7 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
       confidence?: number;
       needs_clarification?: boolean;
     };
-    const validCategories: Category[] = ["HR", "PRODUCT", "GENERAL", "UNKNOWN"];
+    const validCategories: Category[] = ["HR", "PRODUCT", "GENERAL", "PEOPLE", "UNKNOWN"];
     const category =
       validCategories.includes(parsed.category as Category)
         ? (parsed.category as Category)
