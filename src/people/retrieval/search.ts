@@ -54,6 +54,26 @@ export interface SearchResponse {
   fallback: boolean;
   /** unresolved lookup → offer the correction path instead of guessing. */
   suggestCorrection: boolean;
+  /** results are BOB's best guess inferred from Org/Sub Org/position (not an
+   *  approved ownership tag) → the responder must add a "confirm with HR" note. */
+  inferred?: boolean;
+}
+
+/** Token-substring match of a free-text topic/team across Org/Sub Org/Group/
+ *  Department/Function/Position. Strips a leading team/แผนก word; every token
+ *  (>=2 chars) must appear. Sorted by name, capped. Shared by TEAM_ROSTER and the
+ *  ownership inference path (HR: interpret ownership from Org/Sub Org). */
+export function matchByTopic(dir: ProfileMap, query: string, cap: number): Profile[] {
+  const stripped = norm(query).replace(/^(ทีม|แผนก|ฝ่าย|กลุ่ม|team|department|dept\.?)\s*/i, "").trim();
+  const tokens = (stripped || norm(query)).split(/\s+/).filter((t) => t.length >= 2);
+  if (tokens.length === 0) return [];
+  return Object.values(dir)
+    .filter((p) => {
+      const hay = [p.org, p.subOrg, p.group, p.department, p.team, p.position].map(norm).join(" | ");
+      return tokens.every((t) => hay.includes(t));
+    })
+    .sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"))
+    .slice(0, cap);
 }
 
 export function toWorkProfile(p: Profile, tags?: TagInfo, now = new Date()): WorkProfile {
@@ -127,22 +147,11 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       const rawTeam = (sp.team || sp.topic || "").trim();
       const bu = (sp.bu || "").trim();
       if (!norm(rawTeam) && !norm(bu)) return empty({ fallback: true });
-      // Broaden matching: strip a leading "team/แผนก/ฝ่าย" word, then require every
-      // query token (>=2 chars) to appear as a substring across org/subOrg/group/
-      // department/function/position. Handles "ทีมบัญชี" (→ บัญชี, matched in a
-      // position like เจ้าหน้าที่บัญชี) and "Account Finance" (both tokens in a Sub
-      // Org "Account & Finance"). Still capped, so a broad token can't enumerate.
-      const stripped = norm(rawTeam).replace(/^(ทีม|แผนก|ฝ่าย|กลุ่ม|team|department|dept\.?)\s*/i, "").trim();
-      const tokens = (stripped || norm(rawTeam)).split(/\s+/).filter((t) => t.length >= 2);
       const nbu = norm(bu);
-      const members = Object.values(directory)
-        .filter((p) => {
-          const hay = [p.org, p.subOrg, p.group, p.department, p.team, p.position].map(norm).join(" | ");
-          const teamOk = tokens.length > 0 ? tokens.every((t) => hay.includes(t)) : !norm(rawTeam);
-          const buOk = nbu ? [p.org, p.subOrg].some((f) => norm(f).includes(nbu)) : true;
-          return teamOk && buOk;
-        })
-        .sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"));
+      let members = norm(rawTeam)
+        ? matchByTopic(directory, rawTeam, Number.MAX_SAFE_INTEGER)
+        : Object.values(directory).sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"));
+      if (nbu) members = members.filter((p) => [p.org, p.subOrg].some((f) => norm(f).includes(nbu)));
       if (members.length === 0) return empty({ fallback: true });
       return {
         results: members.slice(0, PC_CONFIG.TEAM_ROSTER_MAX).map((p) => dir(p, "team_member", input)),
@@ -164,13 +173,10 @@ export function retrieve(input: RetrieveInput): SearchResponse {
     case "OWNER_LOOKUP":
     case "EXPERT_FIND":
     case "IDEA_CONNECT":
-      return tagSearch(input, ref);
-
-    // Out-of-scope for MVP retrieval — handled by context/responder or a later
-    // phase (plan §10). Return a clean fallback so callers can route.
-    case "TEAM_DISCOVERY":
     case "EXPERIENCE_FIND":
-      return empty({ fallback: true });
+    case "TEAM_DISCOVERY":
+      return topicSearch(input, ref);
+
     case "CONTACT_HELP":
     case "FOLLOW_UP_FILTER":
     case "CORRECTION":
@@ -178,6 +184,27 @@ export function retrieve(input: RetrieveInput): SearchResponse {
     default:
       return empty();
   }
+}
+
+/** Topic intents (owner/expert/idea/experience/team-discovery). Prefer an approved
+ *  tag match (confident); otherwise INFER from Org/Sub Org/position and flag it so
+ *  the responder adds a "please confirm with HR" note (HR: ownership is read off
+ *  Org/Sub Org; BOB suggests but may misread). Nothing → fallback. */
+function topicSearch(input: RetrieveInput, topic: string): SearchResponse {
+  if (!norm(topic)) return empty({ fallback: true });
+  if (TAG_INTENT[input.intent.subIntent]) {
+    const tagged = tagSearch(input, topic);
+    if (tagged.results.length > 0) return tagged; // confident, not inferred
+  }
+  const inferred = matchByTopic(input.directory, topic, PC_CONFIG.MAX_RESULTS_FIRST_PAGE);
+  if (inferred.length === 0) return empty({ fallback: true });
+  return {
+    results: inferred.map((p) => dir(p, "inferred_org", input)),
+    total: inferred.length,
+    fallback: false,
+    suggestCorrection: false,
+    inferred: true,
+  };
 }
 
 /** Tag-based match (owner/expert/open-to-discuss). Exact-normalized topic match

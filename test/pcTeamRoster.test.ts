@@ -36,6 +36,13 @@ test("no false match for an unrelated team", () => {
   assert.deepEqual(emails("Marketing"), []);
 });
 
+test("OWNER_LOOKUP infers from Org/Sub Org when no tag, flags inferred + reasonCode", () => {
+  const resp = retrieve({ intent: { subIntent: "OWNER_LOOKUP", searchParams: { topic: "Account" }, confidence: 0.9 }, directory });
+  assert.equal(resp.inferred, true);
+  assert.deepEqual(resp.results.map((r) => r.profile.email).sort(), ["malee@builk.com", "somchai@builk.com"]);
+  assert.equal(resp.results[0]?.reasonCode, "inferred_org");
+});
+
 test("parseRows reads Sub Org and Group columns", () => {
   const header = ["Email", "ชื่อ", "นามสกุล", "ชื่อเล่น", "ตำแหน่ง", "Org", "Sub Org", "Group", "Corporate Department", "Function", "วันที่เริ่มงาน", "Supervisor"];
   const rows = [

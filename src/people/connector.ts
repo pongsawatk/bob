@@ -14,7 +14,7 @@ import { retrieve, tagMapFromDirectory, type TagMap } from "./retrieval/search.j
 import { employmentPolicyFromEnv, filterServable, type EmploymentPolicy } from "./policy/employment.js";
 import { compose, templateFallback } from "./responder/compose.js";
 import { createAuditLog, type AuditLog } from "./audit/log.js";
-import { DIRECTORY_INTENTS, type PolicyOutcome, type SubIntent } from "./pcTypes.js";
+import { type PolicyOutcome, type SubIntent } from "./pcTypes.js";
 import type { ProfileMap } from "./profileStore.js";
 
 export const RESPONDER_SYSTEM_PROMPT = `คุณคือ BOB ผู้ช่วยของ Builk One Group ตอบคำถามเรื่อง "ใครคือใคร / อยู่ทีมไหน / หัวหน้าคือใคร" จากทะเบียนพนักงาน
@@ -25,8 +25,9 @@ export const RESPONDER_SYSTEM_PROMPT = `คุณคือ BOB ผู้ช่�
 const MSG = {
   refuse: "ขอโทษครับ คำถามนี้ผมช่วยไม่ได้ — ผมไม่ให้ข้อมูลส่วนตัว การจัดอันดับบุคคล หรือรายชื่อทั้งบริษัทครับ 🙏",
   clarify: "ช่วยระบุให้ชัดขึ้นอีกนิดได้ไหมครับ เช่น ชื่อคน ชื่อทีม หรือหัวหน้าที่ต้องการทราบ 🙏",
-  comingSoon:
-    "ตอนนี้ผมยังตอบเรื่อง “ใครดูแล/เชี่ยวชาญเรื่องนี้” ไม่ได้ครับ (กำลังจะเปิดเร็ว ๆ นี้) — แต่ถามหา “คน / ทีม / หัวหน้า” ได้เลยนะครับ 😊",
+  // Appended when results are inferred from Org/Sub Org rather than an approved tag.
+  confirmHr:
+    "\n\nℹ️ อันนี้ผมแนะนำจากข้อมูลทีม/ตำแหน่งในทะเบียนนะครับ อาจไม่แม่นทั้งหมด รบกวนยืนยันกับ HR อีกทีเพื่อความชัวร์ 🙏",
 };
 
 export interface PeopleDeps {
@@ -75,16 +76,13 @@ export async function handlePeopleQuery(query: string, deps: PeopleDeps): Promis
   const tags = deps.tags ?? tagMapFromDirectory(directory);
   const response = retrieve({ intent, directory, tags, now });
 
-  if (response.results.length === 0) {
-    // Tag intents have no data yet → signal it's coming; directory intents just
-    // didn't match → the safe not-found template.
-    const msg = DIRECTORY_INTENTS.has(intent.subIntent) ? templateFallback([]) : MSG.comingSoon;
-    return finish(msg, 0, true);
-  }
+  if (response.results.length === 0) return finish(templateFallback([]), 0, true);
 
   const knownNames = await deps.getKnownNames();
   const composed = await compose({ results: response.results, query, llm: deps.responderLlm, knownNames });
-  return finish(composed.text, response.results.length, composed.usedFallback);
+  // Inferred (Org/Sub Org guess) → append the "confirm with HR" note.
+  const text = response.inferred ? composed.text + MSG.confirmHr : composed.text;
+  return finish(text, response.results.length, composed.usedFallback);
 }
 
 // ── Real wiring for the /people command ───────────────────────────────────

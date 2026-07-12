@@ -61,10 +61,18 @@ test("low confidence → clarify", async () => {
   assert.match(r.text, /ระบุให้ชัด/);
 });
 
-test("tag intent with no tags → coming-soon (G0 not yet)", async () => {
+test("OWNER_LOOKUP with no match anywhere → not-found", async () => {
   const r = await handlePeopleQuery("ใครดูแล Pojjaman", deps(intent("OWNER_LOOKUP", { topic: "Pojjaman" })));
   assert.equal(r.outcome, "ALLOW");
-  assert.match(r.text, /กำลังจะเปิด/);
+  assert.match(r.text, /ยังไม่พบ/); // "Pojjaman" not in the fixture's Org/Sub Org/position
+});
+
+test("OWNER_LOOKUP inferred from Org/Sub Org → served WITH confirm-HR note", async () => {
+  // topic matches department "Engineering" of both fixtures → inferred (no tags)
+  const r = await handlePeopleQuery("ใครดูแล Engineering", deps(intent("OWNER_LOOKUP", { topic: "Engineering" })));
+  assert.equal(r.outcome, "ALLOW");
+  assert.ok(r.resultCount > 0);
+  assert.match(r.text, /ยืนยันกับ HR/); // disclaimer appended
 });
 
 test("tag intent WITH tags → owner served", async () => {
