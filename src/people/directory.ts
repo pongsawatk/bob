@@ -18,6 +18,10 @@ export interface Profile {
   fullNameEn?: string;
   position?: string;
   org?: string;
+  /** "Sub Org" column — finer than Org; often where the real team name lives. */
+  subOrg?: string;
+  /** "Group" column — another grouping used for team lookups. */
+  group?: string;
   department?: string;
   team?: string;
   rank?: string;
@@ -125,6 +129,8 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
   const iNick = col(/ชื่อเล่น/);
   const iPos = col(/ตำแหน่ง/);
   const iOrg = col(/^org$/i);
+  const iSubOrg = col(/^sub\s*[- ]?\s*org$/i);
+  const iGroup = col(/^group$/i);
   const iDept = col(/corporate department/i);
   const iTeam = col(/function/i);
   const iRank = col(/^rank$/i);
@@ -150,6 +156,8 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
       nickname: clean(r[iNick]) || undefined,
       position: clean(r[iPos]) || undefined,
       org: clean(r[iOrg]) || undefined,
+      subOrg: iSubOrg >= 0 ? clean(r[iSubOrg]) || undefined : undefined,
+      group: iGroup >= 0 ? clean(r[iGroup]) || undefined : undefined,
       department: clean(r[iDept]) || undefined,
       team: clean(r[iTeam]) || undefined,
       rank: clean(r[iRank]) || undefined,

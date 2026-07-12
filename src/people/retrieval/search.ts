@@ -63,7 +63,7 @@ export function toWorkProfile(p: Profile, tags?: TagInfo, now = new Date()): Wor
     nickname: p.nickname,
     email: p.email,
     org: p.org,
-    subOrg: p.department,
+    subOrg: p.subOrg ?? p.department,
     position: p.position,
     functionTeam: p.team,
     supervisor: p.supervisor,
@@ -124,13 +124,22 @@ export function retrieve(input: RetrieveInput): SearchResponse {
     }
 
     case "TEAM_ROSTER": {
-      const team = (sp.team || sp.topic || "").trim();
+      const rawTeam = (sp.team || sp.topic || "").trim();
       const bu = (sp.bu || "").trim();
-      if (!norm(team) && !norm(bu)) return empty({ fallback: true });
+      if (!norm(rawTeam) && !norm(bu)) return empty({ fallback: true });
+      // Broaden matching: strip a leading "team/แผนก/ฝ่าย" word, then require every
+      // query token (>=2 chars) to appear as a substring across org/subOrg/group/
+      // department/function/position. Handles "ทีมบัญชี" (→ บัญชี, matched in a
+      // position like เจ้าหน้าที่บัญชี) and "Account Finance" (both tokens in a Sub
+      // Org "Account & Finance"). Still capped, so a broad token can't enumerate.
+      const stripped = norm(rawTeam).replace(/^(ทีม|แผนก|ฝ่าย|กลุ่ม|team|department|dept\.?)\s*/i, "").trim();
+      const tokens = (stripped || norm(rawTeam)).split(/\s+/).filter((t) => t.length >= 2);
+      const nbu = norm(bu);
       const members = Object.values(directory)
         .filter((p) => {
-          const teamOk = norm(team) ? [p.org, p.department, p.team].some((f) => norm(f) === norm(team)) : true;
-          const buOk = norm(bu) ? norm(p.org) === norm(bu) : true;
+          const hay = [p.org, p.subOrg, p.group, p.department, p.team, p.position].map(norm).join(" | ");
+          const teamOk = tokens.length > 0 ? tokens.every((t) => hay.includes(t)) : !norm(rawTeam);
+          const buOk = nbu ? [p.org, p.subOrg].some((f) => norm(f).includes(nbu)) : true;
           return teamOk && buOk;
         })
         .sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"));
