@@ -297,9 +297,9 @@ export async function handleTeamsRequest(
       }
     }
 
-    // Admin command: /people connector (Wave-1 shadow). Inert unless PEOPLE_ENABLED=1;
-    // when disabled the message falls through to the normal pipeline. Separate path —
-    // does not change BOB's default refuse-others behavior in normal chat.
+    // Admin debug command for People Connector — everyone else gets it via natural
+    // chat (router category PEOPLE, see pipeline/index.ts). Inert unless
+    // PEOPLE_ENABLED=1; when disabled the message falls through to the normal pipeline.
     if (peopleEnabled() && /^\/people\b/i.test(message)) {
       const cmd = parsePeopleCommand(message);
       if (cmd) {
