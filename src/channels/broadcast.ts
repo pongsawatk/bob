@@ -34,15 +34,30 @@ const introducedKey = (email: string) => `bob:introduced:${email}`;
 // ── Message card (mirrors the proven welcome-card layout so Teams renders the
 //    line breaks/bullets reliably — plain-text "\n" gets collapsed by Teams). ──
 
+// Examples are the green-lit set only — capabilities verified against code +
+// Langfuse traces. Deliberately NOT here: personal leave balance (HumanSoft, we
+// can't read it), ลาพักร้อน entitlement + ทันตกรรม/ประกันกลุ่ม (known KB gaps),
+// and bare "วันหยุดเหลือกี่วัน" (ambiguous — the old card trained people to ask
+// leave balance, which then hit the HumanSoft wall → day-0 churn).
 const EXAMPLES_MATCHED =
-  '•  "คุณรู้จักผมไหม" — ดูว่าผมรู้อะไรเกี่ยวกับคุณบ้าง\n' +
-  '•  "วันหยุดเหลือกี่วัน" — ตอบไวทันใจ\n' +
-  '•  "สวัสดิการมีอะไรบ้าง" — ตอบครบ ดึงจากคลัง HR โดยตรง';
+  '•  "หัวหน้าฉันคือใคร"\n' +
+  '•  "ฉันทำงานที่นี่มากี่ปีแล้ว"\n' +
+  '•  "ทีม ConTech มีใครบ้าง" — ถามหาคน/ทีมอื่นก็ได้ครับ';
+
+const HR_GOOD =
+  '•  "เดือนนี้บริษัทหยุดวันไหนบ้าง" — ตอบทันที\n' +
+  '•  "สวัสดิการพนักงานมีอะไรบ้าง"\n' +
+  '•  "ลาแต่ละประเภทมีเงื่อนไขยังไง"';
 
 const EXAMPLES_FALLBACK =
-  '•  "วันหยุดเหลือกี่วัน" — ตอบไวทันใจ\n' +
-  '•  "สวัสดิการมีอะไรบ้าง" — ตอบครบ ดึงจากคลัง HR โดยตรง\n' +
-  '•  "เบิกค่าทันตกรรมยังไง" — บอกสิทธิ์และขั้นตอนให้';
+  HR_GOOD + '\n•  "หัวหน้าของ [ชื่อ] คือใคร" / "ทีม ConTech มีใครบ้าง"';
+
+// The #1 thing people asked in round one — name it plainly instead of letting
+// them hit the wall themselves, then pivot to what we CAN answer.
+const HUMANSOFT_LINE =
+  'คำที่หลายคนถามกันเยอะสุดคือ *"วันลาของฉันเหลือกี่วัน"* — ยอดคงเหลือส่วนตัวอยู่ในระบบ ' +
+  "**HumanSoft** ที่ตอนนี้ผมยังเข้าไม่ถึงครับ เช็กได้ที่แอป/เว็บ HumanSoft โดยตรง " +
+  "แต่ถ้าถามเรื่อง **วันหยุดบริษัท** หรือ **สิทธิ์/เงื่อนไขการลาตามระเบียบ** ถามผมได้เต็มที่เลยครับ";
 
 const FEEDBACK_LINE =
   "👍/👎 ใต้คำตอบช่วยผมเก่งขึ้นได้มากครับ — และถ้ามีเรื่องที่อยากให้ผมช่วยได้แต่ผมยังทำไม่ได้ พิมพ์ทิ้งไว้เลย ทีมงานอ่านเองสม่ำเสมอครับ";
@@ -55,28 +70,35 @@ export function buildBroadcastCard(entry: RosterEntry): Partial<Activity> {
   const body =
     entry.variant === "matched"
       ? [
-          tb(`สวัสดีครับ**คุณ${entry.nickname}** 👋 ผม BOB เองครับ`),
+          tb("**มีของใหม่มาบอกครับ** ✨"),
+          tb(`สวัสดีครับ **คุณ${entry.nickname}** 👋 ผม BOB เองนะครับ`, { spacing: "Small" }),
           tb(
-            "ที่เห็นว่าผมทักชื่อคุณถูก — นั่นแหละครับของใหม่ 😄 ตอนนี้ **ผมรู้จักคุณ** จาก " +
-              "**ทะเบียนที่ทีม HR ดูแล** เลยพอรู้ว่าคุณอยู่ทีมไหน ตำแหน่งอะไร จะได้ช่วยตอบให้ตรงกับตัวคุณมากขึ้น " +
-              "— และผมเห็น **เฉพาะข้อมูลของคนที่คุยกับผมเท่านั้น** ใครมาถามเรื่องคนอื่น ผมไม่บอกครับ 🔒",
+            "จากนี้คุยกับผม **ไม่ต้องเล่าตัวเองซ้ำแล้ว** — ผมพอรู้ว่าคุณอยู่ทีมไหน ตำแหน่งอะไร " +
+              "ทำงานมานานแค่ไหน หัวหน้าคือใคร (จาก **ทะเบียนที่ทีม HR ดูแล**) เลยช่วยตอบให้ " +
+              "**ตรงกับตัวคุณ** ได้มากขึ้นครับ",
             { spacing: "Small" }
           ),
-          tb("ลองเล่นกับผมดูเลย 👇", { weight: "Bolder", spacing: "Medium" }),
+          tb("ลองทักผมแบบนี้ดูครับ 👇", { weight: "Bolder", spacing: "Medium" }),
           tb(EXAMPLES_MATCHED, { spacing: "Small" }),
-          tb("เรื่องวันลา สวัสดิการ นโยบาย หรือเรื่องงานทั่วไป ทักมาได้ตลอดครับ", { spacing: "Medium" }),
+          tb("**เรื่อง HR ที่ผมตอบได้แม่น** 💚", { spacing: "Medium" }),
+          tb(HR_GOOD, { spacing: "Small" }),
+          tb("**ขอบอกให้ชัดสักเรื่อง** 🙏", { spacing: "Medium" }),
+          tb(HUMANSOFT_LINE, { spacing: "Small" }),
+          tb('ลองเริ่มเลยไหมครับ 👉 *"หัวหน้าฉันคือใคร"*', { weight: "Bolder", spacing: "Medium" }),
           tb(FEEDBACK_LINE, { isSubtle: true, size: "Small", spacing: "Medium" }),
         ]
       : [
-          tb("สวัสดีครับ 👋 ผม BOB (Builk One Buddy) ผู้ช่วย AI ของ Builk One Group ครับ"),
+          tb("**BOB มีอะไรใหม่มาเล่าครับ** ✨"),
           tb(
-            "ผมเพิ่งอัปเกรดตัวเองมาใหม่ — ตอบไวขึ้นและตอบได้ครบขึ้น โดยเฉพาะเรื่องสวัสดิการและนโยบาย " +
-              "ที่ดึงจากคลังความรู้ที่ทีม HR ดูแลเองโดยตรงครับ",
+            "สวัสดีครับ 👋 ผม BOB (Builk One Buddy) ผู้ช่วย AI ของ Builk One Group ครับ " +
+              "จากคำถามที่หลายคนส่งเข้ามา ผมมีบางเรื่องอยากบอกให้ชัด จะได้ใช้ผมได้คุ้มขึ้นครับ",
             { spacing: "Small" }
           ),
-          tb("ลองเล่นกับผมดูเลย 👇", { weight: "Bolder", spacing: "Medium" }),
+          tb("**เรื่อง HR ที่ผมตอบได้แม่น** 💚", { weight: "Bolder", spacing: "Medium" }),
           tb(EXAMPLES_FALLBACK, { spacing: "Small" }),
-          tb("เรื่องวันลา สวัสดิการ นโยบาย หรือเรื่องงานทั่วไป ทักมาได้ตลอดครับ", { spacing: "Medium" }),
+          tb("**ขอบอกให้ชัดสักเรื่อง** 🙏", { spacing: "Medium" }),
+          tb(HUMANSOFT_LINE, { spacing: "Small" }),
+          tb("ลองทักมาได้ทุกเมื่อครับ 😊", { spacing: "Medium" }),
           tb(FEEDBACK_LINE, { isSubtle: true, size: "Small", spacing: "Medium" }),
         ];
 
