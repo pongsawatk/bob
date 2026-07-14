@@ -49,12 +49,23 @@ export function serializeFacts(results: readonly SearchResult[]): string {
     .join("\n");
 }
 
-export function buildComposeUserMessage(results: readonly SearchResult[], query: string): string {
+export function buildComposeUserMessage(
+  results: readonly SearchResult[],
+  query: string,
+  ctx?: Pick<ResponseContext, "totalMatches" | "shownCount" | "truncated">,
+): string {
+  // Tell the model the totals when the page is partial, so it can satisfy the
+  // disclosure rule the guard enforces instead of always losing to the template.
+  const totals =
+    ctx?.truncated
+      ? `\nพบทั้งหมด ${ctx.totalMatches} คน แต่ FACTS ด้านล่างมีเพียง ${ctx.shownCount} คนแรก — ` +
+        `คำตอบต้องบอกทั้งจำนวนทั้งหมด (${ctx.totalMatches}) และจำนวนที่แสดง (${ctx.shownCount}) ให้ชัดเจน\n`
+      : "";
   return (
-    `คำถามผู้ใช้: ${query}\n\n` +
+    `คำถามผู้ใช้: ${query}\n${totals}\n` +
     `FACTS (ใช้ได้เฉพาะข้อมูลด้านล่างนี้เท่านั้น):\n${serializeFacts(results)}\n\n` +
     `เรียบเรียงคำตอบสั้น ๆ เป็นมิตร ภาษาไทย ลงท้าย "ครับ" — ` +
-    `ห้ามเพิ่มชื่อบุคคล อีเมล หรือคุณสมบัติใด ๆ ที่ไม่มีใน FACTS เด็ดขาด`
+    `ห้ามเพิ่มชื่อบุคคล อีเมล หรือคุณสมบัติใด ๆ ที่ไม่มีใน FACTS เด็ดขาด และห้ามบอกว่าไม่พบข้อมูลเมื่อ FACTS ไม่ว่าง`
   );
 }
 
@@ -86,6 +97,107 @@ export function postCheck(output: string, results: readonly SearchResult[], know
   return { ok: true };
 }
 
+// ── WP-03: the response guard ────────────────────────────────────────────
+//
+// postCheck above guards the ADDITIVE direction only — names/emails the model
+// invented. The production failures were the other two directions: denying results
+// retrieval had found, and quietly presenting a truncated page as the whole answer.
+// Retrieval is the source of truth; anything the model says that contradicts it is
+// discarded in favour of a template.
+
+/** Everything the guard needs to judge an answer against the retrieval result. */
+export interface ResponseContext {
+  results: readonly SearchResult[];
+  knownNames?: readonly string[];
+  totalMatches: number;
+  shownCount: number;
+  truncated: boolean;
+  countOnly: boolean;
+  filtersApplied?: { team?: string; bu?: string; role?: string; topic?: string; personRef?: string };
+}
+
+/** Phrases that assert "nothing found". Deliberately broad: a false positive costs a
+ *  template instead of prose, while a false negative ships a lie. */
+const NO_RESULT_RE =
+  /ไม่พบ|ไม่เจอ|ยังไม่มีข้อมูล|ไม่มีข้อมูล|ไม่มีใคร|ไม่มีทีม|no (?:results?|matches?|one)\b|not found|(?:could ?n[o']t|can ?n[o']t|unable to) find/i;
+
+/** Every integer in the text, for the count/truncation checks. */
+const numbersIn = (s: string): number[] => [...s.matchAll(/\d+/g)].map((m) => Number(m[0]));
+
+export function validateResponse(output: string, ctx: ResponseContext): PostCheck {
+  const base = postCheck(output, ctx.results, ctx.knownNames ?? []);
+  if (!base.ok) return base;
+
+  // Retrieval found people → the answer may not say it found none.
+  if (ctx.totalMatches > 0 && NO_RESULT_RE.test(output)) {
+    return { ok: false, reason: "no_result_contradiction" };
+  }
+
+  // "How many" → the exact number must appear, and no other headcount may.
+  if (ctx.countOnly) {
+    const nums = numbersIn(output);
+    if (!nums.includes(ctx.totalMatches)) return { ok: false, reason: "count_mismatch" };
+  }
+
+  // A partial page must say so: both the true total and how many are shown.
+  if (ctx.truncated) {
+    const nums = numbersIn(output);
+    if (!nums.includes(ctx.totalMatches) || !nums.includes(ctx.shownCount)) {
+      return { ok: false, reason: "truncation_not_disclosed" };
+    }
+  }
+
+  return { ok: true };
+}
+
+/** Human-readable echo of the filters retrieval actually applied, so the answer
+ *  states what was searched rather than leaving the user to guess. */
+function filterPhrase(ctx: ResponseContext): string {
+  const f = ctx.filtersApplied ?? {};
+  const role = f.role ? ROLE_TH[f.role] ?? f.role : "";
+  const parts = [f.team ? `ทีม ${f.team}` : "", f.bu ? `หน่วยงาน ${f.bu}` : "", role ? `ตำแหน่ง ${role}` : ""].filter(Boolean);
+  return parts.join(" · ");
+}
+
+/** Canonical role → Thai label for display. Unknown canon falls through as-is. */
+const ROLE_TH: Record<string, string> = {
+  QUALITY_ASSURANCE: "QA",
+  PROJECT_COORDINATOR: "Project Coordinator",
+  PROJECT_MANAGER: "Project Manager",
+  BUSINESS_ANALYST: "Business Analyst",
+  DEVELOPER: "Developer",
+  DESIGNER: "Designer",
+  ACCOUNTANT: "บัญชี",
+  SALES: "ฝ่ายขาย",
+  MARKETING: "การตลาด",
+  HUMAN_RESOURCES: "ทรัพยากรบุคคล",
+};
+
+/** Deterministic answer for a "how many" question — the count comes from retrieval,
+ *  never from a model. */
+export function countTemplate(ctx: ResponseContext): string {
+  const what = filterPhrase(ctx);
+  return `${what ? `${what} ` : ""}มีทั้งหมด ${ctx.totalMatches} คนครับ`;
+}
+
+/** Deterministic roster answer. Discloses total vs shown whenever the page is
+ *  partial — the "พบ 20 คน" (of 29) failure is impossible to express here. */
+export function rosterTemplate(ctx: ResponseContext): string {
+  if (ctx.totalMatches === 0) return templateFallback([]);
+  const what = filterPhrase(ctx);
+  const head = ctx.truncated
+    ? `${what ? `${what} — ` : ""}พบทั้งหมด ${ctx.totalMatches} คนครับ แสดง ${ctx.shownCount} คนแรก:`
+    : `${what ? `${what} — ` : ""}พบ ${ctx.totalMatches} คนครับ:`;
+  const lines = ctx.results.map((r, i) => {
+    const p = r.profile;
+    const who = `${p.displayName}${p.nickname ? ` (${p.nickname})` : ""}`;
+    const role = [p.position, p.functionTeam || p.subOrg].filter(Boolean).join(" · ");
+    return `${i + 1}. ${who}${role ? ` — ${role}` : ""}${p.email ? ` — ${p.email}` : ""}`;
+  });
+  const more = ctx.truncated ? `\n\nพิมพ์ "ดูต่อ" เพื่อดูรายชื่อถัดไปครับ` : "";
+  return `${head}\n${lines.join("\n")}${more}`;
+}
+
 /** Plain, safe answer built straight from the facts (no LLM). */
 export function templateFallback(results: readonly SearchResult[]): string {
   if (results.length === 0) {
@@ -102,7 +214,7 @@ export function templateFallback(results: readonly SearchResult[]): string {
   return `พบ ${results.length} คนที่เกี่ยวข้องครับ:\n${lines.join("\n")}`;
 }
 
-export interface ComposeInput {
+export interface ComposeInput extends ResponseContext {
   results: SearchResult[];
   query: string;
   llm: LlmCall;
@@ -116,19 +228,34 @@ export interface ComposeResult {
   reason?: string;
 }
 
+/** The deterministic answer for a context — what the LLM is measured against and
+ *  what we ship when it fails. */
+export function deterministicAnswer(ctx: ResponseContext): string {
+  if (ctx.countOnly) return countTemplate(ctx);
+  return rosterTemplate(ctx);
+}
+
 export async function compose(input: ComposeInput): Promise<ComposeResult> {
-  const { results, query, llm, knownNames = [] } = input;
+  const { results, query, llm } = input;
+  if (input.countOnly) {
+    // A count needs no prose and no model call: retrieval already has the answer.
+    return { text: countTemplate(input), usedFallback: false, reason: "deterministic_count" };
+  }
   if (results.length === 0) return { text: templateFallback([]), usedFallback: true, reason: "no_results" };
 
   let output = "";
   try {
-    output = (await llm(buildComposeUserMessage(results, query))).trim();
+    output = (await llm(buildComposeUserMessage(results, query, input))).trim();
   } catch {
     output = "";
   }
-  if (!output) return { text: templateFallback(results), usedFallback: true, reason: "empty" };
+  if (!output) return { text: deterministicAnswer(input), usedFallback: true, reason: "empty" };
 
-  const check = postCheck(output, results, knownNames);
-  if (!check.ok) return { text: templateFallback(results), usedFallback: true, reason: check.reason };
+  const check = validateResponse(output, input);
+  if (!check.ok) {
+    // Reason code only — never the query, the answer, or any roster row.
+    console.warn(`RESPONDER_VALIDATION_FAILED: ${check.reason}`);
+    return { text: deterministicAnswer(input), usedFallback: true, reason: check.reason };
+  }
   return { text: output, usedFallback: false };
 }

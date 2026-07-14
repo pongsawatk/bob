@@ -76,13 +76,25 @@ export async function handlePeopleQuery(query: string, deps: PeopleDeps): Promis
   const tags = deps.tags ?? tagMapFromDirectory(directory);
   const response = retrieve({ intent, directory, tags, now });
 
-  if (response.results.length === 0) return finish(templateFallback([]), 0, true);
+  // A count question is answered from `totalMatches` with no rows and no LLM call,
+  // so an empty `results` here is a real answer rather than a miss.
+  if (response.totalMatches === 0) return finish(templateFallback([]), 0, true);
 
   const knownNames = await deps.getKnownNames();
-  const composed = await compose({ results: response.results, query, llm: deps.responderLlm, knownNames });
+  const composed = await compose({
+    results: response.results,
+    query,
+    llm: deps.responderLlm,
+    knownNames,
+    totalMatches: response.totalMatches,
+    shownCount: response.shownCount,
+    truncated: response.truncated,
+    countOnly: response.countOnly,
+    filtersApplied: response.filtersApplied,
+  });
   // Inferred (Org/Sub Org guess) → append the "confirm with HR" note.
   const text = response.inferred ? composed.text + MSG.confirmHr : composed.text;
-  return finish(text, response.results.length, composed.usedFallback);
+  return finish(text, response.totalMatches, composed.usedFallback);
 }
 
 // ── Real wiring for the /people command ───────────────────────────────────
