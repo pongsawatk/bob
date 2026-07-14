@@ -8,6 +8,7 @@
 import { callLLM } from "../llm/openrouter.js";
 import type { LFGeneration } from "../obs/langfuse.js";
 import { env } from "../env.js";
+import { getPrompt } from "../prompts/langfusePrompts.js";
 import { getActiveDirectory, getDirectoryMeta, getDirectoryNames } from "./directory.js";
 import { extractIntent, INTENT_SYSTEM_PROMPT, type LlmCall } from "./intent/extract.js";
 import { evaluatePolicy } from "./policy/gate.js";
@@ -288,9 +289,33 @@ export type GenRecorder = (gen: LFGeneration) => void;
  * while being the only category running two uninstrumented LLM calls.
  */
 export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
-  /** Wrap a callLLM invocation so its usage/cost/latency reach the trace. */
-  const instrumented = (name: string, model: string, maxTokens: number, temperature: number, systemPrompt: string): LlmCall =>
+  /**
+   * Wrap a callLLM invocation: fetch the prompt (Langfuse `production`, falling back
+   * to prompts/fallback/<name>.txt), call, and record the generation.
+   *
+   * `promptName` makes these editable without a deploy, like the router/HR prompts.
+   * The inline constants remain the compiled-in last resort and are the source the
+   * fallback files were generated from, so a Langfuse outage degrades to today's
+   * exact behavior rather than an error.
+   */
+  const instrumented = (
+    name: string,
+    promptName: string,
+    inlinePrompt: string,
+    model: string,
+    maxTokens: number,
+    temperature: number,
+  ): LlmCall =>
     async (user) => {
+      let systemPrompt = inlinePrompt;
+      let version = "inline";
+      try {
+        const p = await getPrompt(promptName);
+        systemPrompt = p.text;
+        version = p.version;
+      } catch {
+        // getPrompt only throws if the fallback file is missing too — keep the answer.
+      }
       const r = await callLLM({
         model,
         systemPrompt,
@@ -301,7 +326,7 @@ export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
       recordGeneration?.({
         name,
         model,
-        version: "inline", // migrates to a Langfuse prompt version with Prompt B/C
+        version,
         input: user,
         output: r.text,
         latencyMs: r.latencyMs,
@@ -315,10 +340,10 @@ export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
       return r.text;
     };
 
-  const intentLlm = instrumented("people:intent", env.MODEL_ROUTER, 200, 0, INTENT_SYSTEM_PROMPT);
+  const intentLlm = instrumented("people:intent", "people-intent", INTENT_SYSTEM_PROMPT, env.MODEL_ROUTER, 200, 0);
   // good Thai composing; only reached for answers that actually need phrasing —
   // counts and rosters are templated (WP-03).
-  const responderLlm = instrumented("people:responder", env.MODEL_HR, 400, 0.3, RESPONDER_SYSTEM_PROMPT);
+  const responderLlm = instrumented("people:responder", "people-responder", RESPONDER_SYSTEM_PROMPT, env.MODEL_HR, 400, 0.3);
 
   return {
     intentLlm,
