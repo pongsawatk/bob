@@ -17,7 +17,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test \"test/*.test.ts\"",
-    "insight:report": "tsx scripts/insight-report.mjs"
+    "insight:report": "tsx scripts/insight-report.mjs",
+    "prompt": "node scripts/prompt-admin.mjs"
   },
   "dependencies": {
     "@upstash/qstash": "^2.11.1",

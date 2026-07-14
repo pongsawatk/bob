@@ -1,4 +1,16 @@
-// Ad-hoc Langfuse prompt tool for the WP prompt workflow: get / diff / create-candidate / promote.
+// Langfuse prompt admin — the safe prompt-change workflow in one place.
+//
+//   npm run prompt get <name> [label]        read the live text (default: production)
+//   npm run prompt version <name> <n>        read one explicit version
+//   npm run prompt create-candidate <name> <file>   publish a NEW version, label `candidate`
+//   npm run prompt promote <name> <version>  move the `production` label onto a version
+//
+// Why candidate-first: src/prompts/langfusePrompts.ts fetches ?label=production and
+// nothing else, so a `candidate` version is invisible to production until promoted.
+// Promote never overwrites — the previous version keeps its number, so rollback is
+// `promote <name> <old-version>`.
+//
+// Only prints prompt text; never echoes keys.
 import { loadEnv } from "./_load-env.mjs";
 import { readFileSync } from "node:fs";
 loadEnv();
