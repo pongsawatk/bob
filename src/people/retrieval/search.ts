@@ -16,6 +16,7 @@ import {
   type SearchResult,
   type TaggedSearchResult,
 } from "./rank.js";
+import { canonicalRole, rawRoleMatchesPosition, roleMatchesPosition } from "./roles.js";
 
 export interface TagInfo {
   ownershipTags?: string[];
@@ -44,12 +45,35 @@ export interface RetrieveInput {
   directory: ProfileMap;
   tags?: TagMap;
   now?: Date;
+  /** page size for roster results; defaults to PC_CONFIG.TEAM_ROSTER_MAX. */
+  limit?: number;
+}
+
+/** The canonical filters retrieval actually applied — echoed back so the answer can
+ *  state what was searched, and so a dropped constraint is visible in a trace. */
+export interface FiltersApplied {
+  team?: string;
+  bu?: string;
+  role?: string;
+  personRef?: string;
+  topic?: string;
 }
 
 export interface SearchResponse {
   results: SearchResult[];
-  /** total individual matches before the first-page cap (for "ดูเพิ่ม"). */
-  total: number;
+  /** exact number of individuals matching every filter, before paging (WP-02). */
+  totalMatches: number;
+  /** how many of them this response actually carries. */
+  shownCount: number;
+  /** shownCount < totalMatches → the responder MUST disclose both. */
+  truncated: boolean;
+  /** emails of the candidates in `results` — the responder's name allowlist (WP-03). */
+  candidateIds: string[];
+  /** canonical filters used to produce this result. */
+  filtersApplied: FiltersApplied;
+  /** the caller asked "how many": totalMatches is the answer and `results` is empty
+   *  on purpose, so no roster reaches the LLM. */
+  countOnly: boolean;
   /** no individual matched → caller should point to a team/contact point. */
   fallback: boolean;
   /** unresolved lookup → offer the correction path instead of guessing. */
@@ -100,11 +124,49 @@ export function toWorkProfile(p: Profile, tags?: TagInfo, now = new Date()): Wor
 
 const empty = (over: Partial<SearchResponse> = {}): SearchResponse => ({
   results: [],
-  total: 0,
+  totalMatches: 0,
+  shownCount: 0,
+  truncated: false,
+  candidateIds: [],
+  filtersApplied: {},
+  countOnly: false,
   fallback: false,
   suggestCorrection: false,
   ...over,
 });
+
+/** Build a response from the full match set: page it, and derive the totals /
+ *  candidate allowlist from one place so they can never disagree. `countOnly`
+ *  keeps the totals but ships no rows. */
+function page(
+  all: readonly SearchResult[],
+  opts: { limit: number; countOnly: boolean; filtersApplied: FiltersApplied; inferred?: boolean },
+): SearchResponse {
+  const shown = opts.countOnly ? [] : all.slice(0, opts.limit);
+  return {
+    results: [...shown],
+    totalMatches: all.length,
+    shownCount: shown.length,
+    truncated: shown.length < all.length && !opts.countOnly,
+    candidateIds: shown.map((r) => r.profile.email ?? "").filter(Boolean),
+    filtersApplied: opts.filtersApplied,
+    countOnly: opts.countOnly,
+    fallback: false,
+    suggestCorrection: false,
+    ...(opts.inferred ? { inferred: true } : {}),
+  };
+}
+
+/** Apply a role constraint to a candidate list. A role the taxonomy knows filters by
+ *  concept; one it doesn't still filters by raw substring. Never returns the input
+ *  unfiltered — silently dropping this constraint is the P0-2 bug. */
+function applyRole(people: readonly Profile[], rawRole: string): { people: Profile[]; canonical: string } {
+  const canon = canonicalRole(rawRole);
+  const people2 = canon
+    ? people.filter((p) => roleMatchesPosition(p.position, canon))
+    : people.filter((p) => rawRoleMatchesPosition(p.position, rawRole));
+  return { people: people2, canonical: canon ?? rawRole.trim() };
+}
 
 const dir = (p: Profile, reasonCode: string, input: RetrieveInput): DirectorySearchResult => ({
   kind: "directory",
@@ -122,6 +184,7 @@ export function retrieve(input: RetrieveInput): SearchResponse {
   const { intent, directory } = input;
   const sp = intent.searchParams;
   const ref = (sp.personRef || sp.topic || "").trim();
+  const countOnly = intent.countOnly === true;
 
   switch (intent.subIntent) {
     case "PERSON_LOOKUP": {
@@ -135,30 +198,44 @@ export function retrieve(input: RetrieveInput): SearchResponse {
         if (!seen.has(p.email)) (seen.add(p.email), ordered.push(dir(p, "name_match", input)));
       }
       if (ordered.length === 0) return empty({ fallback: true, suggestCorrection: true });
-      return {
-        results: ordered.slice(0, PC_CONFIG.MAX_RESULTS_FIRST_PAGE),
-        total: ordered.length,
-        fallback: false,
-        suggestCorrection: false,
-      };
+      return page(ordered, {
+        limit: input.limit ?? PC_CONFIG.MAX_RESULTS_FIRST_PAGE,
+        countOnly,
+        filtersApplied: { personRef: ref },
+      });
     }
 
     case "TEAM_ROSTER": {
       const rawTeam = (sp.team || sp.topic || "").trim();
       const bu = (sp.bu || "").trim();
-      if (!norm(rawTeam) && !norm(bu)) return empty({ fallback: true });
-      const nbu = norm(bu);
+      const role = (sp.role || "").trim();
+      // A role alone is a legitimate query ("ใครเป็น QA บ้าง"); team/bu alone still is too.
+      if (!norm(rawTeam) && !norm(bu) && !norm(role)) return empty({ fallback: true });
+      const filtersApplied: FiltersApplied = {};
+
       let members = norm(rawTeam)
         ? matchByTopic(directory, rawTeam, Number.MAX_SAFE_INTEGER)
         : Object.values(directory).sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"));
-      if (nbu) members = members.filter((p) => [p.org, p.subOrg].some((f) => norm(f).includes(nbu)));
-      if (members.length === 0) return empty({ fallback: true });
-      return {
-        results: members.slice(0, PC_CONFIG.TEAM_ROSTER_MAX).map((p) => dir(p, "team_member", input)),
-        total: members.length,
-        fallback: false,
-        suggestCorrection: false,
-      };
+      if (norm(rawTeam)) filtersApplied.team = rawTeam;
+
+      // AND, not OR: each filter narrows what the previous one left.
+      const nbu = norm(bu);
+      if (nbu) {
+        members = members.filter((p) => [p.org, p.subOrg].some((f) => norm(f).includes(nbu)));
+        filtersApplied.bu = bu;
+      }
+      if (norm(role)) {
+        const applied = applyRole(members, role);
+        members = applied.people;
+        filtersApplied.role = applied.canonical;
+      }
+
+      if (members.length === 0) return empty({ fallback: true, filtersApplied });
+      return page(members.map((p) => dir(p, "team_member", input)), {
+        limit: input.limit ?? PC_CONFIG.TEAM_ROSTER_MAX,
+        countOnly,
+        filtersApplied,
+      });
     }
 
     case "REPORTING_LINE": {
@@ -167,7 +244,11 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       if (!person) return empty({ fallback: true, suggestCorrection: true });
       const sup = findSupervisor(directory, person.email);
       if (sup.status !== "resolved") return empty({ fallback: true, suggestCorrection: true });
-      return { results: [dir(sup.supervisor, "supervisor", input)], total: 1, fallback: false, suggestCorrection: false };
+      return page([dir(sup.supervisor, "supervisor", input)], {
+        limit: 1,
+        countOnly: false, // "who is X's boss" is never a count question
+        filtersApplied: { personRef: ref },
+      });
     }
 
     case "OWNER_LOOKUP":
@@ -197,14 +278,13 @@ function topicSearch(input: RetrieveInput, topic: string): SearchResponse {
     if (tagged.results.length > 0) return tagged; // confident, not inferred
   }
   const inferred = matchByTopic(input.directory, topic, PC_CONFIG.MAX_RESULTS_FIRST_PAGE);
-  if (inferred.length === 0) return empty({ fallback: true });
-  return {
-    results: inferred.map((p) => dir(p, "inferred_org", input)),
-    total: inferred.length,
-    fallback: false,
-    suggestCorrection: false,
+  if (inferred.length === 0) return empty({ fallback: true, filtersApplied: { topic } });
+  return page(inferred.map((p) => dir(p, "inferred_org", input)), {
+    limit: input.limit ?? PC_CONFIG.MAX_RESULTS_FIRST_PAGE,
+    countOnly: input.intent.countOnly === true,
+    filtersApplied: { topic },
     inferred: true,
-  };
+  });
 }
 
 /** Tag-based match (owner/expert/open-to-discuss). Exact-normalized topic match
@@ -229,12 +309,10 @@ function tagSearch(input: RetrieveInput, topic: string): SearchResponse {
       });
     }
   }
-  if (matched.length === 0) return empty({ fallback: true });
-  const ranked = rankTagged(matched);
-  return {
-    results: ranked.slice(0, PC_CONFIG.MAX_RESULTS_FIRST_PAGE),
-    total: ranked.length,
-    fallback: false,
-    suggestCorrection: false,
-  };
+  if (matched.length === 0) return empty({ fallback: true, filtersApplied: { topic } });
+  return page(rankTagged(matched), {
+    limit: input.limit ?? PC_CONFIG.MAX_RESULTS_FIRST_PAGE,
+    countOnly: input.intent.countOnly === true,
+    filtersApplied: { topic },
+  });
 }

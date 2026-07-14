@@ -47,6 +47,10 @@ export interface SearchParams {
   bu?: string;
   /** a person referenced by name or nickname (NOT resolved by the LLM). */
   personRef?: string;
+  /** a role/position constraint as the user typed it, e.g. "QA", "tester",
+   *  "Project Coordinator". Canonicalized deterministically by retrieval/roles.ts —
+   *  the LLM must not map it itself. ANDed with team/bu; never dropped (WP-02). */
+  role?: string;
 }
 
 /** Output of intent extraction (§6). The LLM returns ONLY this — never names,
@@ -55,6 +59,9 @@ export interface IntentResult {
   subIntent: SubIntent;
   searchParams: SearchParams;
   confidence: number;
+  /** the user asked "how many", not "who" → answer the exact deterministic count
+   *  and ship no roster to the responder (WP-02). */
+  countOnly?: boolean;
 }
 
 /** Serving-facing profile view (§5). Directory layer is live now; tag arrays stay
@@ -114,12 +121,13 @@ export function validateIntentResult(x: unknown): string[] {
   if (!isSubIntent(o.subIntent)) e.push("subIntent must be one of SUB_INTENTS");
   if (typeof o.confidence !== "number" || !(o.confidence >= 0 && o.confidence <= 1))
     e.push("confidence must be a number in [0,1]");
+  if (o.countOnly !== undefined && typeof o.countOnly !== "boolean") e.push("countOnly must be a boolean");
   const sp = o.searchParams;
   if (typeof sp !== "object" || sp === null) {
     e.push("searchParams must be an object");
   } else {
     for (const [k, v] of Object.entries(sp as Record<string, unknown>)) {
-      if (!["topic", "team", "bu", "personRef"].includes(k)) e.push(`searchParams has unexpected key: ${k}`);
+      if (!["topic", "team", "bu", "personRef", "role"].includes(k)) e.push(`searchParams has unexpected key: ${k}`);
       else if (v !== undefined && typeof v !== "string") e.push(`searchParams.${k} must be a string`);
     }
   }

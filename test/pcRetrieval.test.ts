@@ -51,7 +51,9 @@ test("PERSON_LOOKUP: nickname match ranks above name match", () => {
 test("PERSON_LOOKUP: caps at MAX_RESULTS_FIRST_PAGE (3) but reports true total", () => {
   const r = retrieve({ intent: I("PERSON_LOOKUP", { personRef: "ก้อง" }), directory });
   assert.equal(r.results.length, 3);
-  assert.equal(r.total, 4);
+  assert.equal(r.totalMatches, 4);
+  assert.equal(r.shownCount, 3);
+  assert.equal(r.truncated, true);
 });
 
 test("PERSON_LOOKUP: empty ref → suggestCorrection, no results", () => {
