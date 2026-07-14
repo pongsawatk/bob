@@ -17,6 +17,7 @@ import {
   type TaggedSearchResult,
 } from "./rank.js";
 import { canonicalRole, rawRoleMatchesPosition, roleMatchesPosition } from "./roles.js";
+import { resolveTeamAlias } from "./aliases.js";
 
 export interface TagInfo {
   ownershipTags?: string[];
@@ -87,6 +88,10 @@ export interface SearchResponse {
   /** the person has no supervisor in the registry (top of the org, or a blank cell).
    *  A real, explainable answer — not a search miss. */
   noSupervisor?: boolean;
+  /** the team term maps to more than one real team → ask which, never pick (WP-05). */
+  needsClarification?: boolean;
+  /** the registry spellings to offer when needsClarification. */
+  clarifyOptions?: string[];
 }
 
 /** Token-substring match of a free-text topic/team across Org/Sub Org/Group/
@@ -104,6 +109,16 @@ export function matchByTopic(dir: ProfileMap, query: string, cap: number): Profi
     })
     .sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"))
     .slice(0, cap);
+}
+
+/** Exact-normalized match of a canonical (registry-spelled) team across the grouping
+ *  columns. Used only for alias-resolved terms, where we know the real value. */
+export function matchByCanonicalTeam(dir: ProfileMap, canonical: string): Profile[] {
+  const want = norm(canonical);
+  if (!want) return [];
+  return Object.values(dir)
+    .filter((p) => [p.org, p.subOrg, p.group, p.department, p.team].some((f) => norm(f) === want))
+    .sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"));
 }
 
 export function toWorkProfile(p: Profile, tags?: TagInfo, now = new Date()): WorkProfile {
@@ -274,10 +289,27 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       if (!norm(rawTeam) && !norm(bu) && !norm(role)) return empty({ fallback: true });
       const filtersApplied: FiltersApplied = {};
 
-      let members = norm(rawTeam)
-        ? matchByTopic(directory, rawTeam, Number.MAX_SAFE_INTEGER)
-        : Object.values(directory).sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"));
-      if (norm(rawTeam)) filtersApplied.team = rawTeam;
+      // Resolve the team term through the alias dictionary first: "PJM" and "ทีมบัญชี"
+      // never appear verbatim in the registry, which is why they returned 0.
+      let teamTerm = rawTeam;
+      let canonicalTeam = false;
+      if (norm(rawTeam)) {
+        const alias = resolveTeamAlias(directory, rawTeam);
+        if (alias.status === "ambiguous") {
+          return empty({ needsClarification: true, clarifyOptions: alias.options, filtersApplied: { team: rawTeam } });
+        }
+        if (alias.status === "resolved") (teamTerm = alias.canonical), (canonicalTeam = true);
+      }
+
+      // A canonical value is the registry's own spelling, so match it exactly. Token
+      // substring would make "Accounting" also swallow "Finance And Accounting" —
+      // the very two teams the alias layer exists to keep apart.
+      let members = !norm(teamTerm)
+        ? Object.values(directory).sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"))
+        : canonicalTeam
+          ? matchByCanonicalTeam(directory, teamTerm)
+          : matchByTopic(directory, teamTerm, Number.MAX_SAFE_INTEGER);
+      if (norm(teamTerm)) filtersApplied.team = teamTerm;
 
       // AND, not OR: each filter narrows what the previous one left.
       const nbu = norm(bu);

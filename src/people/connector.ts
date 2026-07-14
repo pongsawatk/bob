@@ -145,6 +145,13 @@ export async function handlePeopleQuery(
 
   if (response.noSupervisor) return finish(MSG.noSupervisor, 0, true);
 
+  // The team term maps to more than one real team in the registry → ask which one.
+  // Guessing here is how a confident wrong roster gets shipped (WP-05).
+  if (response.needsClarification && response.clarifyOptions?.length) {
+    const opts = response.clarifyOptions.map((o) => `• ${o}`).join("\n");
+    return finish(`ตอนนี้ในทะเบียนมีมากกว่า 1 ทีมที่ตรงกับที่ถามครับ หมายถึงทีมไหนดีครับ 🙏\n${opts}`, 0, true);
+  }
+
   // A count question is answered from `totalMatches` with no rows and no LLM call,
   // so an empty `results` here is a real answer rather than a miss.
   if (response.totalMatches === 0) return finish(templateFallback([]), 0, true);

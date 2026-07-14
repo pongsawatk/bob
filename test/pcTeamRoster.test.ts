@@ -20,8 +20,15 @@ const directory: Record<string, Profile> = {
 const roster = (team: string): IntentResult => ({ subIntent: "TEAM_ROSTER", searchParams: { team }, confidence: 0.9 });
 const emails = (team: string) => retrieve({ intent: roster(team), directory }).results.map((r) => r.profile.email).sort();
 
-test('Thai "ทีมบัญชี" matches via position (prefix "ทีม" stripped, substring on บัญชี)', () => {
-  assert.deepEqual(emails("ทีมบัญชี"), ["somchai@builk.com"]); // มาลี position=Accountant (no บัญชี), matched below by English
+// SUPERSEDED BY WP-05 (alias layer). This used to assert ["somchai"] only: token
+// substring matched the Thai word บัญชี inside his *position* ("เจ้าหน้าที่บัญชี") while มาลี's
+// English "Accountant" missed, so "ทีมบัญชี" returned one member of a two-person team —
+// an accident of which language each cell happened to be typed in.
+// Asking for the accounting team now resolves the alias to the team the registry
+// actually carries and returns the whole team. Behavior widened deliberately; the
+// no-false-match guarantee below is unchanged.
+test('Thai "ทีมบัญชี" resolves to the accounting team and returns all of it', () => {
+  assert.deepEqual(emails("ทีมบัญชี"), ["malee@builk.com", "somchai@builk.com"]);
 });
 
 test('English "Account Finance" matches Sub Org "Account & Finance" (all tokens present)', () => {
