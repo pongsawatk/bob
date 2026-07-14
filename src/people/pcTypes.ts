@@ -76,6 +76,10 @@ export interface IntentResult {
   /** who the question is about (WP-01). Absent = legacy/unknown; retrieval treats
    *  it as NAMED_PERSON/TEAM exactly as before. */
   targetType?: TargetType;
+  /** set by the extractor (never by the LLM) when both attempts failed and this is
+   *  the confidence-0 fallback — so telemetry can tell "the model couldn't parse the
+   *  question" apart from "the question genuinely had no answer" (WP-07). */
+  extractionFallback?: boolean;
 }
 
 /** Serving-facing profile view (§5). Directory layer is live now; tag arrays stay

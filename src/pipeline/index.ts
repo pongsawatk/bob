@@ -114,13 +114,17 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   if (peopleEnabled() && routed.category === "PEOPLE") {
     const peopleSpan = trace.span("people");
     const tPeople = Date.now();
-    const res = await handlePeopleQuery(message, defaultPeopleDeps(), { requester });
+    // Log the intent + responder calls as child generations, so PEOPLE turns carry
+    // their real token/cost figures. Without this they reported none at all, which
+    // made the only two-LLM-call category look like the cheapest one.
+    const res = await handlePeopleQuery(message, defaultPeopleDeps((g) => trace.generation(g)), { requester });
     peopleSpan.end({
       subIntent: res.subIntent,
       outcome: res.outcome,
       resultCount: res.resultCount,
       targetType: res.targetType,
       identityOutcome: res.identityOutcome,
+      errorStage: res.errorStage,
     });
     trace.update({
       output: res.text,
@@ -131,13 +135,19 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
         policyOutcome: res.outcome,
         resultCount: res.resultCount,
         usedFallback: res.usedFallback,
+        // Stage-specific degradation (WP-07): `usedFallback` alone couldn't say WHICH
+        // stage gave up, so every no-result looked identical and none were actionable.
+        intentFallback: res.intentFallback,
+        retrievalFallback: res.retrievalFallback,
+        responderFallback: res.responderFallback,
+        errorStage: res.errorStage,
         // Self-reference telemetry (WP-01): pseudonymous key only, never the email.
         targetType: res.targetType,
         identityOutcome: res.identityOutcome,
         identityKey: res.identityKey,
         latencyMs: Date.now() - t0,
         coldStart,
-        timings: { peopleMs: Date.now() - tPeople },
+        timings: { peopleMs: Date.now() - tPeople, ...res.stages },
       },
       tags: [channel, "PEOPLE", "llm"],
     });

@@ -173,7 +173,7 @@ export async function extractIntent(query: string, llm: LlmCall, opts: ExtractOp
   const retry = coerce(extractJson(await llm(user + "\n\nโปรดตอบเป็น JSON ที่ถูกต้องตาม schema เท่านั้น ไม่มีข้อความอื่น")));
   if (retry) return withTargetType(query, retry);
 
-  return withTargetType(query, { ...FALLBACK_INTENT, searchParams: {} });
+  return withTargetType(query, { ...FALLBACK_INTENT, searchParams: {}, extractionFallback: true });
 }
 
 /** Overwrite whatever the model proposed with the deterministic verdict, and drop a
