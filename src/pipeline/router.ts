@@ -30,7 +30,11 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
     ? history.slice(-4).map(m => `${m.role === "user" ? "ผู้ใช้" : "BOB"}: ${m.content}`).join("\n") + "\n\n"
     : "";
 
-  const userMsg = `${historyContext}คำถามล่าสุด: ${message}\n\nตอบเป็น JSON เท่านั้น: {"category":"HR|PRODUCT|GENERAL|UNKNOWN","confidence":0.0-1.0,"needs_clarification":boolean}`;
+  // The category list here must match the system prompt's. It omitted PEOPLE while
+  // the system prompt offered it — a contradiction the model resolves by avoiding
+  // the category it was told to answer with. (This reminder is load-bearing: without
+  // it the router model returns prose instead of JSON.)
+  const userMsg = `${historyContext}คำถามล่าสุด: ${message}\n\nตอบเป็น JSON เท่านั้น: {"category":"HR|PRODUCT|GENERAL|PEOPLE|UNKNOWN","confidence":0.0-1.0,"needs_clarification":boolean}`;
 
   const result = await callLLM({
     model: env.MODEL_ROUTER,
