@@ -87,4 +87,9 @@ export const env = {
   // status column: allowlist of servable statuses and/or a denylist.
   PEOPLE_ACTIVE_STATUSES: opt("PEOPLE_ACTIVE_STATUSES"),
   PEOPLE_EXCLUDED_STATUSES: opt("PEOPLE_EXCLUDED_STATUSES"),
+  // Self-reference resolution (WP-01): binds the asker to their profile by canonical
+  // company email so "หัวหน้าฉันคือใคร" can be answered. "0" disables ONLY this — every
+  // other People answer keeps working. Default on; PEOPLE_ENABLED remains the
+  // kill-switch for the feature as a whole.
+  PEOPLE_SELF_ENABLED: opt("PEOPLE_SELF_ENABLED"),
 } as const;

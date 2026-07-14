@@ -361,7 +361,19 @@ export async function handleTeamsRequest(
       const convId = activity.conversation?.id ?? userId;
       const history = await getHistory(convId);
 
-      const output = await runPipeline({ message, userId, userName, history, sessionId: convId, channel: "teams", profileBlock });
+      const output = await runPipeline({
+        message,
+        userId,
+        userName,
+        history,
+        sessionId: convId,
+        channel: "teams",
+        profileBlock,
+        // Verified claims only: email comes from TeamsInfo.getMember (tenant-verified),
+        // aadObjectId from the activity. displayName is carried for telemetry but is
+        // never a join key — People Connector binds on email alone.
+        requester: { email: email || undefined, aadObjectId: aadId, displayName: userName },
+      });
 
       await appendHistory(convId, message, output.answer);
 

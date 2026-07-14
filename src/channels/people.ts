@@ -35,8 +35,13 @@ export async function handlePeopleCommand(
     return "ขออภัยครับ คำสั่ง /people (โหมด debug) ใช้ได้เฉพาะผู้ดูแลระบบครับ — ถามแบบข้อความปกติได้เลยนะครับ 🙏";
   }
 
-  const res = await handlePeopleQuery(cmd.query, defaultPeopleDeps());
+  // The admin's own identity — so /people reproduces the real self-reference path
+  // rather than a version of it that can never resolve.
+  const res = await handlePeopleQuery(cmd.query, defaultPeopleDeps(), {
+    requester: { email: who.email, aadObjectId: who.aadObjectId },
+  });
   // Debug footer so the admin can judge routing/grounding at a glance.
   const flag = res.usedFallback ? " · ⚠️fallback" : "";
-  return `${res.text}\n\n_[debug · ${res.subIntent} · ${res.outcome} · ${res.resultCount} ผล${flag}]_`;
+  const id = res.identityOutcome ? ` · ${res.targetType}/${res.identityOutcome}` : "";
+  return `${res.text}\n\n_[debug · ${res.subIntent} · ${res.outcome} · ${res.resultCount} ผล${flag}${id}]_`;
 }

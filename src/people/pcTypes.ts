@@ -3,7 +3,10 @@
 // LLM boundary (intent extraction) validates against these; everything downstream
 // is deterministic.
 
-/** The 11 sub-intents from the main plan §2 (exact set). */
+/** The sub-intents from the main plan §2, plus TENURE (WP-01: "ฉันทำงานมากี่ปีแล้ว"
+ *  is a distinct question from PERSON_LOOKUP — it wants one computed fact, not a
+ *  profile). Adding a value here is safe for `/insight`: analytics normalizes the
+ *  router *category* (HR/PRODUCT/GENERAL/PEOPLE/UNKNOWN), never these. */
 export const SUB_INTENTS = [
   "OWNER_LOOKUP",
   "EXPERT_FIND",
@@ -13,11 +16,18 @@ export const SUB_INTENTS = [
   "PERSON_LOOKUP",
   "TEAM_ROSTER",
   "REPORTING_LINE",
+  "TENURE",
   "CONTACT_HELP",
   "FOLLOW_UP_FILTER",
   "CORRECTION",
 ] as const;
 export type SubIntent = (typeof SUB_INTENTS)[number];
+
+/** Who the question is about. Resolved deterministically (see intent/extract.ts
+ *  #detectSelfReference) — the LLM may propose it, but code decides, because a wrong
+ *  SELF/NAMED_PERSON call is an identity bug, not a phrasing one. */
+export const TARGET_TYPES = ["SELF", "NAMED_PERSON", "TEAM", "UNKNOWN"] as const;
+export type TargetType = (typeof TARGET_TYPES)[number];
 
 /** Sub-intents answerable from directory data we already have live (plan §10 MVP).
  *  The rest need approved tags (owner/expertise/open-to-discuss) → gated on G0. */
@@ -26,6 +36,7 @@ export const DIRECTORY_INTENTS: ReadonlySet<SubIntent> = new Set<SubIntent>([
   "PERSON_LOOKUP",
   "TEAM_ROSTER",
   "REPORTING_LINE",
+  "TENURE",
   "CONTACT_HELP",
   "FOLLOW_UP_FILTER",
   "CORRECTION",
@@ -62,6 +73,9 @@ export interface IntentResult {
   /** the user asked "how many", not "who" → answer the exact deterministic count
    *  and ship no roster to the responder (WP-02). */
   countOnly?: boolean;
+  /** who the question is about (WP-01). Absent = legacy/unknown; retrieval treats
+   *  it as NAMED_PERSON/TEAM exactly as before. */
+  targetType?: TargetType;
 }
 
 /** Serving-facing profile view (§5). Directory layer is live now; tag arrays stay
@@ -122,6 +136,8 @@ export function validateIntentResult(x: unknown): string[] {
   if (typeof o.confidence !== "number" || !(o.confidence >= 0 && o.confidence <= 1))
     e.push("confidence must be a number in [0,1]");
   if (o.countOnly !== undefined && typeof o.countOnly !== "boolean") e.push("countOnly must be a boolean");
+  if (o.targetType !== undefined && !(TARGET_TYPES as readonly string[]).includes(o.targetType as string))
+    e.push("targetType must be one of TARGET_TYPES");
   const sp = o.searchParams;
   if (typeof sp !== "object" || sp === null) {
     e.push("searchParams must be an object");

@@ -47,6 +47,9 @@ export interface RetrieveInput {
   now?: Date;
   /** page size for roster results; defaults to PC_CONFIG.TEAM_ROSTER_MAX. */
   limit?: number;
+  /** the asker's own profile, when their identity resolved (WP-01). Required for
+   *  targetType SELF; absent means we must not answer a self question at all. */
+  requester?: Profile;
 }
 
 /** The canonical filters retrieval actually applied — echoed back so the answer can
@@ -81,6 +84,9 @@ export interface SearchResponse {
   /** results are BOB's best guess inferred from Org/Sub Org/position (not an
    *  approved ownership tag) → the responder must add a "confirm with HR" note. */
   inferred?: boolean;
+  /** the person has no supervisor in the registry (top of the org, or a blank cell).
+   *  A real, explainable answer — not a search miss. */
+  noSupervisor?: boolean;
 }
 
 /** Token-substring match of a free-text topic/team across Org/Sub Org/Group/
@@ -174,6 +180,16 @@ const dir = (p: Profile, reasonCode: string, input: RetrieveInput): DirectorySea
   reasonCode,
 });
 
+/** Sub-intents where "about me" is a meaningful question. A first-person pronoun in
+ *  anything else ("อยากคุยเรื่อง X กับเรา") is just phrasing — it must not divert the
+ *  query into the self path. */
+const SELF_INTENTS: ReadonlySet<SubIntent> = new Set<SubIntent>([
+  "REPORTING_LINE",
+  "PERSON_LOOKUP",
+  "TENURE",
+  "TEAM_ROSTER",
+]);
+
 const TAG_INTENT: Partial<Record<SubIntent, { rel: RelationshipType; field: keyof TagInfo; reason: string }>> = {
   OWNER_LOOKUP: { rel: "OWNER", field: "ownershipTags", reason: "owner_tag" },
   EXPERT_FIND: { rel: "EXPERT", field: "expertiseTags", reason: "expertise_tag" },
@@ -186,7 +202,52 @@ export function retrieve(input: RetrieveInput): SearchResponse {
   const ref = (sp.personRef || sp.topic || "").trim();
   const countOnly = intent.countOnly === true;
 
+  // ── SELF (WP-01) ──────────────────────────────────────────────────────
+  // Answered from the requester's own profile. Name search is bypassed entirely:
+  // nothing was typed to search for, and falling through to it is exactly how the
+  // production rc=0 happened. No requester → no answer, never a guess.
+  if (intent.targetType === "SELF" && SELF_INTENTS.has(intent.subIntent)) {
+    if (!input.requester) return empty({ filtersApplied: { personRef: "self" } });
+    const me = input.requester;
+
+    if (intent.subIntent === "REPORTING_LINE") {
+      const sup = findSupervisor(directory, me.email);
+      if (sup.status !== "resolved") {
+        // "You're at the top" and "your Supervisor cell is broken" both mean we have
+        // no name to give — say so rather than invent one.
+        return empty({ noSupervisor: true, filtersApplied: { personRef: "self" } });
+      }
+      return page([dir(sup.supervisor, "supervisor", input)], {
+        limit: 1,
+        countOnly: false,
+        filtersApplied: { personRef: "self" },
+      });
+    }
+
+    // "ทีมผมมีใครบ้าง" asks about the team, not the person — resolve which team from
+    // the requester's profile, then answer it as an ordinary roster query.
+    if (intent.subIntent === "TEAM_ROSTER") {
+      const myTeam = me.subOrg || me.department || me.team || me.org;
+      if (!norm(myTeam)) return empty({ fallback: true, filtersApplied: { personRef: "self" } });
+      return retrieve({
+        ...input,
+        intent: { ...intent, targetType: "TEAM", searchParams: { ...sp, team: myTeam } },
+      });
+    }
+
+    // PERSON_LOOKUP / TENURE → own profile. tenure is computed from startDate in
+    // toWorkProfile, never read from a snapshot column.
+    return page([dir(me, intent.subIntent === "TENURE" ? "self_tenure" : "self_profile", input)], {
+      limit: 1,
+      countOnly: false,
+      filtersApplied: { personRef: "self" },
+    });
+  }
+
   switch (intent.subIntent) {
+    // TENURE about someone else resolves the same way as any person lookup; the
+    // tenure figure is already part of the approved projection (toWorkProfile).
+    case "TENURE":
     case "PERSON_LOOKUP": {
       if (!norm(ref)) return empty({ suggestCorrection: true });
       const seen = new Set<string>();

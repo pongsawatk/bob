@@ -14,7 +14,9 @@ import { retrieve, tagMapFromDirectory, type TagMap } from "./retrieval/search.j
 import { employmentPolicyFromEnv, filterServable, type EmploymentPolicy } from "./policy/employment.js";
 import { compose, templateFallback } from "./responder/compose.js";
 import { createAuditLog, type AuditLog } from "./audit/log.js";
-import { type PolicyOutcome, type SubIntent } from "./pcTypes.js";
+import { type PolicyOutcome, type SubIntent, type TargetType } from "./pcTypes.js";
+import { resolveRequester, type IdentityStatus, type RequesterIdentity } from "./identity.js";
+import type { Profile } from "./directory.js";
 import type { ProfileMap } from "./profileStore.js";
 
 export const RESPONDER_SYSTEM_PROMPT = `คุณคือ BOB ผู้ช่วยของ Builk One Group ตอบคำถามเรื่อง "ใครคือใคร / อยู่ทีมไหน / หัวหน้าคือใคร" จากทะเบียนพนักงาน
@@ -28,6 +30,16 @@ const MSG = {
   // Appended when results are inferred from Org/Sub Org rather than an approved tag.
   confirmHr:
     "\n\nℹ️ อันนี้ผมแนะนำจากข้อมูลทีม/ตำแหน่งในทะเบียนนะครับ อาจไม่แม่นทั้งหมด รบกวนยืนยันกับ HR อีกทีเพื่อความชัวร์ 🙏",
+  // Identity failures — each says what went wrong, so the user isn't told their
+  // question found nothing when the truth is BOB couldn't tell who was asking.
+  identityNotFound:
+    "ขอโทษครับ ผมยังจับคู่บัญชีของคุณกับทะเบียนพนักงานไม่ได้ เลยยังตอบคำถามเกี่ยวกับตัวคุณเองไม่ได้ 🙏 รบกวนสอบถาม HR เพื่อยืนยันอีเมลในทะเบียนได้เลยครับ",
+  identityAmbiguous:
+    "ขอโทษครับ ผมพบข้อมูลในทะเบียนที่ใช้อีเมลของคุณซ้ำกันมากกว่า 1 รายการ เลยยังไม่กล้าตอบเพราะอาจสลับคนได้ 🙏 รบกวนแจ้ง HR ให้ตรวจสอบทะเบียนอีกทีนะครับ",
+  profileInactive:
+    "ขอโทษครับ สถานะพนักงานของบัญชีนี้ในทะเบียนยังไม่พร้อมให้ผมตอบข้อมูลส่วนตัวครับ 🙏 รบกวนสอบถาม HR โดยตรงนะครับ",
+  noSupervisor:
+    "ผมดูในทะเบียนแล้วไม่พบชื่อหัวหน้าที่ระบุไว้ครับ 🙏 อาจเป็นเพราะยังไม่ได้กรอกไว้ หรือคุณอยู่ระดับบนสุดของสายงาน — รบกวนยืนยันกับ HR อีกทีนะครับ",
 };
 
 export interface PeopleDeps {
@@ -35,6 +47,9 @@ export interface PeopleDeps {
   responderLlm: LlmCall;
   getDirectory: () => Promise<ProfileMap>;
   getKnownNames: () => Promise<string[]>;
+  /** self-resolution kill-switch (WP-01). false → self questions behave as before
+   *  (no identity binding) while every other People answer keeps working. */
+  selfEnabled?: boolean;
   /** approved tags override; when omitted, derived from the directory's ownership
    *  column (empty until HR fills it → tag intents stay "coming soon"). */
   tags?: TagMap;
@@ -44,18 +59,38 @@ export interface PeopleDeps {
   now?: Date;
 }
 
+/** Who is asking. Typed and explicit — never read off global/request metadata. */
+export interface PeopleContext {
+  requester?: RequesterIdentity;
+}
+
 export interface PeopleResult {
   text: string;
   outcome: PolicyOutcome;
   subIntent: SubIntent;
   resultCount: number;
   usedFallback: boolean;
+  /** how identity binding went, for self questions only (WP-01/WP-07). Absent when
+   *  the question wasn't about the asker or self-resolution is disabled. */
+  identityOutcome?: IdentityStatus;
+  /** pseudonymous requester id for telemetry — never the email. */
+  identityKey?: string;
+  targetType?: TargetType;
 }
 
-export async function handlePeopleQuery(query: string, deps: PeopleDeps): Promise<PeopleResult> {
+export async function handlePeopleQuery(
+  query: string,
+  deps: PeopleDeps,
+  ctx: PeopleContext = {},
+): Promise<PeopleResult> {
   const now = deps.now ?? new Date();
+  const selfEnabled = deps.selfEnabled !== false;
   const intent = await extractIntent(query, deps.intentLlm);
   const decision = evaluatePolicy({ queryText: query, intentResult: intent });
+  const isSelf = selfEnabled && intent.targetType === "SELF";
+
+  let identityOutcome: IdentityStatus | undefined;
+  let identityKeyOut: string | undefined;
 
   const finish = (text: string, resultCount = 0, usedFallback = false): PeopleResult => {
     deps.audit?.record({
@@ -64,7 +99,16 @@ export async function handlePeopleQuery(query: string, deps: PeopleDeps): Promis
       resultCount,
       timestamp: now.getTime(),
     });
-    return { text, outcome: decision.outcome, subIntent: intent.subIntent, resultCount, usedFallback };
+    return {
+      text,
+      outcome: decision.outcome,
+      subIntent: intent.subIntent,
+      resultCount,
+      usedFallback,
+      ...(identityOutcome ? { identityOutcome } : {}),
+      ...(identityKeyOut ? { identityKey: identityKeyOut } : {}),
+      ...(intent.targetType ? { targetType: intent.targetType } : {}),
+    };
   };
 
   if (decision.outcome === "REFUSE") return finish(MSG.refuse);
@@ -72,9 +116,34 @@ export async function handlePeopleQuery(query: string, deps: PeopleDeps): Promis
 
   // ALLOW — run retrieval over the live directory, minus anyone the employment
   // gate excludes (inert until HR fills the status column + configures it).
-  const directory = filterServable(await deps.getDirectory(), deps.employmentPolicy ?? {});
+  const all = await deps.getDirectory();
+  const directory = filterServable(all, deps.employmentPolicy ?? {});
+
+  // Bind the asker before retrieval when the question is about them. Each failure is
+  // its own answer: telling someone "ไม่พบ" when we simply couldn't identify them is
+  // the misleading behavior this WP exists to remove.
+  let requester: Profile | undefined;
+  if (isSelf) {
+    const res = resolveRequester({ servable: directory, all, identity: ctx.requester ?? {} });
+    identityOutcome = res.status;
+    if (res.status === "SELF_RESOLVED") {
+      requester = res.profile;
+      identityKeyOut = res.key;
+    } else {
+      const msg =
+        res.status === "IDENTITY_AMBIGUOUS"
+          ? MSG.identityAmbiguous
+          : res.status === "PROFILE_INACTIVE"
+            ? MSG.profileInactive
+            : MSG.identityNotFound;
+      return finish(msg, 0, true);
+    }
+  }
+
   const tags = deps.tags ?? tagMapFromDirectory(directory);
-  const response = retrieve({ intent, directory, tags, now });
+  const response = retrieve({ intent: isSelf ? intent : { ...intent, targetType: undefined }, directory, tags, now, requester });
+
+  if (response.noSupervisor) return finish(MSG.noSupervisor, 0, true);
 
   // A count question is answered from `totalMatches` with no rows and no LLM call,
   // so an empty `results` here is a real answer rather than a miss.
@@ -133,6 +202,7 @@ export function defaultPeopleDeps(): PeopleDeps {
     getKnownNames: getDirectoryNames,
     // tags omitted → derived from the directory ownership column each request.
     employmentPolicy: employmentPolicyFromEnv(env),
+    selfEnabled: env.PEOPLE_SELF_ENABLED !== "0",
     audit: sharedAudit,
   };
 }

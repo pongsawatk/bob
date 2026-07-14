@@ -5,6 +5,7 @@ import { callDomainBot } from "./domainBot.js";
 import { startTrace, flushObs } from "../obs/langfuse.js";
 import type { LLMMessage } from "../llm/openrouter.js";
 import { handlePeopleQuery, defaultPeopleDeps } from "../people/connector.js";
+import type { RequesterIdentity } from "../people/identity.js";
 import { peopleEnabled } from "../channels/people.js";
 
 export type { LLMMessage };
@@ -23,6 +24,13 @@ export interface PipelineInput {
    * injected as an uncached system block. Never contains other employees.
    */
   profileBlock?: string;
+  /**
+   * Verified identity of the ASKER (WP-01). Typed and passed explicitly rather than
+   * inferred from `userId`, which collapses to an AAD id when getMember fails and so
+   * cannot be told apart from a real email. People Connector binds self-reference
+   * questions ("หัวหน้าฉันคือใคร") on this.
+   */
+  requester?: RequesterIdentity;
 }
 
 export interface PipelineOutput {
@@ -45,7 +53,7 @@ export interface PipelineOutput {
 let instanceWarmed = false;
 
 export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
-  const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [], profileBlock } = input;
+  const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [], profileBlock, requester } = input;
   const traceId = crypto.randomUUID();
   const t0 = Date.now();
   const coldStart = !instanceWarmed;
@@ -106,8 +114,14 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
   if (peopleEnabled() && routed.category === "PEOPLE") {
     const peopleSpan = trace.span("people");
     const tPeople = Date.now();
-    const res = await handlePeopleQuery(message, defaultPeopleDeps());
-    peopleSpan.end({ subIntent: res.subIntent, outcome: res.outcome, resultCount: res.resultCount });
+    const res = await handlePeopleQuery(message, defaultPeopleDeps(), { requester });
+    peopleSpan.end({
+      subIntent: res.subIntent,
+      outcome: res.outcome,
+      resultCount: res.resultCount,
+      targetType: res.targetType,
+      identityOutcome: res.identityOutcome,
+    });
     trace.update({
       output: res.text,
       metadata: {
@@ -117,6 +131,10 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
         policyOutcome: res.outcome,
         resultCount: res.resultCount,
         usedFallback: res.usedFallback,
+        // Self-reference telemetry (WP-01): pseudonymous key only, never the email.
+        targetType: res.targetType,
+        identityOutcome: res.identityOutcome,
+        identityKey: res.identityKey,
         latencyMs: Date.now() - t0,
         coldStart,
         timings: { peopleMs: Date.now() - tPeople },
