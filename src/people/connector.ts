@@ -7,7 +7,7 @@
 
 import { callLLM } from "../llm/openrouter.js";
 import { env } from "../env.js";
-import { getActiveDirectory, getDirectoryNames } from "./directory.js";
+import { getActiveDirectory, getDirectoryMeta, getDirectoryNames } from "./directory.js";
 import { extractIntent, INTENT_SYSTEM_PROMPT, type LlmCall } from "./intent/extract.js";
 import { evaluatePolicy } from "./policy/gate.js";
 import { retrieve, tagMapFromDirectory, type TagMap } from "./retrieval/search.js";
@@ -50,6 +50,9 @@ export interface PeopleDeps {
   /** self-resolution kill-switch (WP-01). false → self questions behave as before
    *  (no identity binding) while every other People answer keeps working. */
   selfEnabled?: boolean;
+  /** published-snapshot freshness for the answer footer (WP-10.1). Omitted/failing →
+   *  no footer, never a guessed date. */
+  getMeta?: () => Promise<{ sourceUpdatedAt?: string; lastSyncedAt?: string } | null>;
   /** approved tags override; when omitted, derived from the directory's ownership
    *  column (empty until HR fills it → tag intents stay "coming soon"). */
   tags?: TagMap;
@@ -62,6 +65,27 @@ export interface PeopleDeps {
 /** Who is asking. Typed and explicit — never read off global/request metadata. */
 export interface PeopleContext {
   requester?: RequesterIdentity;
+}
+
+/**
+ * "ข้อมูลทะเบียน ณ <date>" footer (WP-10.1). The sheet is edited on HR's schedule, so a
+ * new joiner can legitimately be missing and a leaver can linger — saying when the
+ * snapshot is from lets the reader judge that instead of trusting a stale roster.
+ * No stamp → no footer. Never a guessed date.
+ */
+async function freshnessNote(deps: PeopleDeps): Promise<string> {
+  if (!deps.getMeta) return "";
+  try {
+    const meta = await deps.getMeta();
+    const iso = meta?.sourceUpdatedAt ?? meta?.lastSyncedAt;
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const shown = d.toLocaleDateString("th-TH", { timeZone: "Asia/Bangkok", day: "numeric", month: "short", year: "numeric" });
+    return `\n\n_ข้อมูลทะเบียน ณ ${shown}_`;
+  } catch {
+    return "";
+  }
 }
 
 export interface PeopleResult {
@@ -169,7 +193,8 @@ export async function handlePeopleQuery(
     filtersApplied: response.filtersApplied,
   });
   // Inferred (Org/Sub Org guess) → append the "confirm with HR" note.
-  const text = response.inferred ? composed.text + MSG.confirmHr : composed.text;
+  const base = response.inferred ? composed.text + MSG.confirmHr : composed.text;
+  const text = base + (await freshnessNote(deps));
   return finish(text, response.totalMatches, composed.usedFallback);
 }
 
@@ -210,6 +235,7 @@ export function defaultPeopleDeps(): PeopleDeps {
     // tags omitted → derived from the directory ownership column each request.
     employmentPolicy: employmentPolicyFromEnv(env),
     selfEnabled: env.PEOPLE_SELF_ENABLED !== "0",
+    getMeta: getDirectoryMeta,
     audit: sharedAudit,
   };
 }

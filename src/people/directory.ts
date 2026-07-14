@@ -100,12 +100,51 @@ function parseThaiDate(v: unknown): string | undefined {
   return `${year}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
 }
 
-const clean = (v: unknown): string => String(v ?? "").trim();
+/** Full-width ASCII (U+FF01–FF5E) → ASCII, plus the ideographic space. */
+const foldWidth = (s: string): string =>
+  s.replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0)).replace(/　/g, " ");
+
+/**
+ * Normalize a sheet cell (WP-04). HR types into Excel, so cells arrive with
+ * non-breaking spaces (pasted out of Word/Teams), doubled spaces, and occasionally
+ * full-width Latin. Those are invisible on screen but make exact-normalized matching
+ * miss, which reads to a user as "BOB does not know my team".
+ *
+ * NFC, deliberately NOT NFKC. NFKC compatibility decompositions break Thai: it splits
+ * SARA AM (U+0E33) into NIKHAHIT + SARA AA, so "ตำแหน่ง" stops matching the literal
+ * "ตำแหน่ง" in the column regexes below — the position column would silently vanish from
+ * every profile, taking the WP-02 role filter down with it. Width folding is done
+ * explicitly instead: it is the only part of NFKC we actually wanted.
+ */
+const clean = (v: unknown): string =>
+  foldWidth(String(v ?? "").normalize("NFC"))
+    .replace(/[   ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** Bump when the stored Profile shape changes, so a snapshot written by an older
+ *  deploy can be recognized rather than misread. */
+export const DIRECTORY_SCHEMA_VERSION = "2";
+
+/** A profile whose Supervisor cell names nobody we can resolve. */
+export interface UnresolvedSupervisor {
+  email: string;
+  raw: string;
+}
 
 export interface ParsedDirectory {
   active: Record<string, Profile>;
   /** Emails listed below the "พนักงานลาออก" divider — ex-staff. */
   resigned: string[];
+  /** Addresses seen more than once (within active, or across the section divider).
+   *  `active` is keyed by email, so a duplicate silently collapses two people into
+   *  the last row written — and a self-identity answer would then be about the wrong
+   *  person. Surfaced so identity resolution can refuse instead of guessing. */
+  duplicateEmails: string[];
+  /** Supervisor cells that resolve to nobody — reported, never guessed. */
+  unresolvedSupervisors: UnresolvedSupervisor[];
+  /** Human-readable data-quality notes for the refresh caller. */
+  warnings: string[];
 }
 
 /** Parse usedRange rows: locate the header row by its "Email" cell (the sheet
@@ -141,13 +180,23 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
 
   const active: Record<string, Profile> = {};
   const resigned: string[] = [];
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
   let inResigned = false;
   for (const r of rows.slice(headerIdx + 1)) {
-    // The divider flips us into the resigned section; the repeated header row
-    // right after it has no email so it's skipped naturally.
-    if (r.some((c) => /ลาออก/.test(String(c ?? "")))) { inResigned = true; continue; }
     const email = clean(r[iEmail]).toLowerCase();
-    if (!email.includes("@")) continue; // trailing/blank/section-header rows
+    const isDataRow = email.includes("@");
+    // The divider flips us into the resigned section; the repeated header row right
+    // after it has no email so it's skipped naturally. Only a row with NO email can be
+    // a divider: matching "ลาออก" anywhere in any cell would make one person's position
+    // or note ("เจ้าหน้าที่ดูแลการลาออก") silently move them — and everyone below them — into
+    // the resigned section, dropping them from the directory with no error.
+    if (!isDataRow && r.some((c) => /ลาออก/.test(String(c ?? "")))) { inResigned = true; continue; }
+    if (!isDataRow) continue; // trailing/blank/section-header rows
+    // Track across BOTH sections: the same address on an active and a resigned row is
+    // the ambiguity that matters most, since it decides whether we serve them at all.
+    if (seen.has(email)) dupes.add(email);
+    seen.add(email);
     if (inResigned) { resigned.push(email); continue; }
     active[email] = {
       email,
@@ -167,7 +216,33 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
       ownershipTags: iOwn >= 0 ? splitTags(r[iOwn]) : undefined,
     };
   }
-  return { active, resigned };
+
+  const duplicateEmails = [...dupes].sort();
+  const unresolvedSupervisors = validateSupervisors(active);
+  const warnings: string[] = [];
+  for (const e of duplicateEmails) warnings.push(`duplicate email in the sheet: ${e}`);
+  if (unresolvedSupervisors.length) {
+    warnings.push(`${unresolvedSupervisors.length} profile(s) name a supervisor that resolves to nobody`);
+  }
+  return { active, resigned, duplicateEmails, unresolvedSupervisors, warnings };
+}
+
+/** Which Supervisor cells point at nobody. The cell is free text (an email or a full
+ *  name), so resolve it the same way retrieval does — by email, then by exactly one
+ *  normalized name match. Anything else is reported, never guessed at. */
+function validateSupervisors(active: Record<string, Profile>): UnresolvedSupervisor[] {
+  const norm = (s: unknown): string => String(s ?? "").normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim();
+  const out: UnresolvedSupervisor[] = [];
+  const people = Object.values(active);
+  for (const p of people) {
+    const raw = (p.supervisor ?? "").trim();
+    if (!raw) continue; // top of the org / not filled in — not an error
+    if (active[raw.toLowerCase()]) continue;
+    const n = norm(raw);
+    const hits = people.filter((q) => norm(q.fullNameTh) === n || (q.fullNameEn ? norm(q.fullNameEn) === n : false));
+    if (hits.length !== 1 || hits[0]?.email === p.email) out.push({ email: p.email, raw });
+  }
+  return out;
 }
 
 // ── Refresh path (Graph → Redis) ───────────────────────────────────────
@@ -175,6 +250,56 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
 export interface DirectoryRefreshResult {
   people: number;
   refreshedAt: string;
+  warnings: string[];
+}
+
+/** Freshness + provenance for the published snapshot (WP-04). Answers cite
+ *  `sourceUpdatedAt` so a user can judge staleness themselves — the sheet is edited on
+ *  HR's schedule, so a new joiner can legitimately be missing. */
+export interface DirectoryMeta {
+  /** when the source workbook was last edited (Graph lastModifiedDateTime). */
+  sourceUpdatedAt?: string;
+  /** when we last pulled it. */
+  lastSyncedAt: string;
+  schemaVersion: string;
+  people: number;
+  warnings: string[];
+}
+
+const META_KEY = "bob:directory:meta";
+
+/** Largest share of the roster a single refresh may drop before we refuse it. A real
+ *  sheet does not lose a third of the company overnight; a truncated export, a renamed
+ *  sheet, or a half-saved file does. Relative on purpose — a hard-coded expected
+ *  headcount would go stale the first time HR hires. */
+const MAX_SHRINK = 0.33;
+
+/** Source workbook's last-modified time. Best-effort: freshness is a nicety, so a
+ *  failure here must not block a refresh that otherwise parsed cleanly. */
+async function fetchSourceUpdatedAt(token: string): Promise<string | undefined> {
+  try {
+    const res = await fetchRetry(
+      `https://graph.microsoft.com/v1.0/drives/${env.DIRECTORY_DRIVE_ID}/items/${env.DIRECTORY_ITEM_ID}?$select=lastModifiedDateTime`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      { retries: 1, timeoutMs: 10_000 },
+    );
+    if (!res.ok) return undefined;
+    const j = (await res.json()) as { lastModifiedDateTime?: string };
+    return j.lastModifiedDateTime;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Published snapshot freshness, for the answer footer. */
+export async function getDirectoryMeta(): Promise<DirectoryMeta | null> {
+  const r = getRedis();
+  if (!r) return null;
+  try {
+    return (await r.get<DirectoryMeta>(META_KEY)) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function refreshDirectory(): Promise<DirectoryRefreshResult> {
@@ -190,18 +315,51 @@ export async function refreshDirectory(): Promise<DirectoryRefreshResult> {
   );
   if (!res.ok) throw new Error(`Graph usedRange HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const j = (await res.json()) as { values?: unknown[][] };
-  const { active, resigned } = parseRows(j.values ?? []);
+  const parsed = parseRows(j.values ?? []);
+  const { active, resigned, warnings } = parsed;
 
   const people = Object.keys(active).length;
   // Same safety rule as refreshKB: never replace a good directory with an empty one.
   if (people === 0) throw new Error("refreshDirectory: parsed 0 people — refusing to overwrite");
 
+  // Validate the whole snapshot BEFORE anything is published — a half-valid directory
+  // must never be visible to a request (WP-04 atomic publish).
+  const leaked = resigned.filter((e) => active[e]);
+  if (leaked.length > 0) {
+    throw new Error(
+      `refreshDirectory: ${leaked.length} resigned email(s) also present in the active projection — refusing to publish`,
+    );
+  }
+
   const r = getRedis();
   if (!r) throw new Error("Upstash Redis is not configured");
+
+  const prev = await r.get<Record<string, Profile>>(REDIS_KEY);
+  const prevCount = prev ? Object.keys(prev).length : 0;
+  if (prevCount > 0 && people < prevCount * (1 - MAX_SHRINK)) {
+    throw new Error(
+      `refreshDirectory: parsed ${people} people vs ${prevCount} currently published ` +
+        `(>${Math.round(MAX_SHRINK * 100)}% drop) — refusing to publish, check the source sheet`,
+    );
+  }
+
+  const meta: DirectoryMeta = {
+    sourceUpdatedAt: await fetchSourceUpdatedAt(token),
+    lastSyncedAt: new Date().toISOString(),
+    schemaVersion: DIRECTORY_SCHEMA_VERSION,
+    people,
+    warnings,
+  };
+
   await r.set(REDIS_KEY, active);
   await r.set(RESIGNED_KEY, resigned);
+  await r.set(META_KEY, meta);
   mem = { map: active, at: Date.now() };
-  return { people, refreshedAt: new Date().toISOString() };
+  // Data-quality notes are surfaced to the admin running /refresh rather than thrown:
+  // a duplicated email or an unresolvable supervisor is HR's to fix, and refusing the
+  // whole directory over one bad cell would be worse than serving it with a warning.
+  if (warnings.length) console.warn(`refreshDirectory warnings: ${warnings.join(" · ")}`);
+  return { people, refreshedAt: meta.lastSyncedAt, warnings };
 }
 
 /** Emails in the sheet's "พนักงานลาออก" section — for excluding ex-staff from
