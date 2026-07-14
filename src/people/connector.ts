@@ -63,9 +63,13 @@ export interface PeopleDeps {
   now?: Date;
 }
 
-/** Who is asking. Typed and explicit — never read off global/request metadata. */
+/** Who is asking, and what was said just before. Typed and explicit — never read off
+ *  global/request metadata, so one conversation's context cannot reach another's. */
 export interface PeopleContext {
   requester?: RequesterIdentity;
+  /** recent turns of THIS conversation, for follow-ups ("เอาเฉพาะ tester"). Passed by
+   *  the caller that owns the conversation scope; the connector holds no state. */
+  history?: { role: "user" | "assistant"; content: string }[];
 }
 
 /**
@@ -140,7 +144,9 @@ export async function handlePeopleQuery(
   const stages: NonNullable<PeopleResult["stages"]> = {};
 
   const tIntent = Date.now();
-  const intent = await extractIntent(query, deps.intentLlm);
+  // History is what turns "เอาเฉพาะ tester" from an unanswerable fragment into
+  // team=DX AND role=tester. The extractor always accepted one; nothing ever passed it.
+  const intent = await extractIntent(query, deps.intentLlm, { history: ctx.history });
   stages.intentMs = Date.now() - tIntent;
 
   const decision = evaluatePolicy({ queryText: query, intentResult: intent });

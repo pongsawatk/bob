@@ -117,7 +117,12 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
     // Log the intent + responder calls as child generations, so PEOPLE turns carry
     // their real token/cost figures. Without this they reported none at all, which
     // made the only two-LLM-call category look like the cheapest one.
-    const res = await handlePeopleQuery(message, defaultPeopleDeps((g) => trace.generation(g)), { requester });
+    const res = await handlePeopleQuery(message, defaultPeopleDeps((g) => trace.generation(g)), {
+      requester,
+      // Scoped to this conversation by the caller — the connector keeps no state, so
+      // one conversation's context cannot reach another's.
+      history: history.slice(-4).map((m) => ({ role: m.role, content: m.content })),
+    });
     peopleSpan.end({
       subIntent: res.subIntent,
       outcome: res.outcome,

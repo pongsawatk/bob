@@ -281,6 +281,12 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       });
     }
 
+    // A follow-up ("เอาเฉพาะ tester") is a roster query whose constraints were merged
+    // from the previous turn by the extractor — the same AND semantics apply, so it
+    // resolves through the same path rather than a parallel one that could drift.
+    // With no constraints at all it falls through to the roster guard below and
+    // clarifies, rather than listing the company.
+    case "FOLLOW_UP_FILTER":
     case "TEAM_ROSTER": {
       const rawTeam = (sp.team || sp.topic || "").trim();
       const bu = (sp.bu || "").trim();
@@ -352,7 +358,6 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       return topicSearch(input, ref);
 
     case "CONTACT_HELP":
-    case "FOLLOW_UP_FILTER":
     case "CORRECTION":
       return empty();
     default:
