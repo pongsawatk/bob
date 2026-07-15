@@ -227,3 +227,43 @@ Golden eval against the live router model: **candidate 22/22, current production
 - **WP-08 performance/cost:** the two biggest levers landed as side effects — counts and rosters no longer call the responder LLM at all (WP-03), removing a call from the p95 path. The HR-side work (cache telemetry, precache, truncation) needs the real provider/Langfuse cache fields the plan says to verify first, which needs a production pull.
 - **WP-10.2–10.6:** did-you-mean, Teams deep-link buttons, suggestion chips, self profile card, no-result mining. All additive; 10.1 (freshness stamp) shipped with WP-04.
 - **Cursor pagination:** needs durable per-conversation state (see WP-06).
+
+---
+
+## Rollout — 2026-07-15
+
+| step | result |
+|---|---|
+| `git push origin main` | `1fe8250..e57aa61` (13 commits) |
+| Vercel production build | **● Ready** — `bob-l2fro3bjk`, aliased to `bob-sidekick.vercel.app` |
+| `GET /api/teams` | 200 `{"ok":true,"service":"BOB Sidekick","version":"v2"}` |
+| `GET /api/chat` | 200 — functions load, so the new imports (identity/aliases/roles/getPrompt) resolve at runtime |
+| Prompt promote | `router` v3 → **v4** (after deploy, per the ordering constraint) |
+| Loader check | `router` **v4**, `people-intent` **v1**, `people-responder` **v1**, `hr` v3 — all served from Langfuse, lengths match the fallbacks |
+| Router smoke (live model, v4) | **8/8** — tenure phrasings now reach PEOPLE; HR/PRODUCT boundaries and injection hold |
+
+Ordering honoured: code deployed first, router promoted second. Promoting first
+would have moved tenure questions to PEOPLE while the old connector still dropped
+identity — breaking an answer that worked.
+
+**Rollback:** `npm run prompt promote router 3` (prompt only, ~60s to take effect);
+`PEOPLE_SELF_ENABLED=0` (self-resolution only); `PEOPLE_ENABLED=0` (whole feature);
+`git revert` for code.
+
+### Not verified end-to-end
+
+`CHAT_TEST_KEY` is unset in production, so `POST /api/chat` is disabled and the
+self-reference happy path could not be driven from here. `api/chat.ts` also accepts
+only `{message, userId, userName, department}` — it has no `requester` field, so it
+could not exercise WP-01 even with the key. **The first real proof that
+"หัวหน้าฉันคือใคร" now answers has to come from a Teams message**, or from adding
+requester support to the test endpoint.
+
+### Next
+
+1. Ask BOB in Teams: "หัวหน้าฉันคือใคร", "ฉันอยู่ทีมไหน", "ผมทำงานมากี่ปีแล้ว", "ทีม DX มี QA กี่คน".
+2. `/refresh` to republish the directory with the WP-04 stamps — the freshness footer
+   stays hidden until a refresh writes `bob:directory:meta`.
+3. Watch Langfuse for `identityOutcome` / `errorStage`; PEOPLE turns should now carry
+   `people:intent` + `people:responder` generations with real cost.
+4. WP-09 canary + round-3 broadcast still need human approval per the plan.
