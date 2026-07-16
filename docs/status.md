@@ -1,7 +1,7 @@
 # BOB Sidekick — Project Status & Roadmap
 
 > **Single source of truth** ว่าโปรเจกต์ทำอะไรไปแล้ว กำลังทำอะไร และจะทำอะไรต่อ
-> อัปเดตล่าสุด: **2026-07-11** · เจ้าของ: Jor / Pongsawat K. (Head of Contech BU, PM)
+> อัปเดตล่าสุด: **2026-07-15** · เจ้าของ: Jor / Pongsawat K. (Head of Contech BU, PM)
 >
 > เอกสารนี้สรุปจากบันทึกการทำงานสะสม. รายละเอียดเชิงลึก/บทเรียนเฉพาะเรื่องอยู่ใน
 > Notion (ลิงก์ท้ายไฟล์) และ commit history. เหตุผลเชิงสถาปัตยกรรมดู
@@ -165,6 +165,50 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - baseline ปัจจุบัน: **30 PASS / 1 WARN / 0 FAIL** (`test-results/eval-baseline.jsonl`)
 - ยืนยันบน production: วันหยุดนับถูก 100%, injection บล็อก 9/9, HumanSoft redirect ตรง
 
+### People Connector — ✅ live ทุกคน (2026-07-12) + Improvement Plan (2026-07-15)
+
+ตอบ "ใครอยู่ทีมไหน / ทีม X มีใครบ้าง / หัวหน้าของ X คือใคร / ใครดูแล X" จากทะเบียนพนักงาน
+(router category **PEOPLE** → `src/people/connector.ts`, gated ด้วย `PEOPLE_ENABLED`).
+`/people` = admin debug path เท่านั้น ไม่ใช่ทางเข้าหลัก.
+
+**รอบปรับปรุงตามแผน Notion "BOB Improvement Execution Plan" (WP-00→07 + Prompt A/B/C):**
+P0 ทั้ง 4 ข้อจาก data pull 14 ก.ค. — **ไม่มีข้อไหนเป็นปัญหา AI/prompt ทั้งหมดเป็นสายที่ไม่ได้ต่อ:**
+
+- **WP-01 self-identity** — `runPipeline` ถือ email ที่ verify แล้วมาตลอด แต่เรียก
+  `handlePeopleQuery(message, deps)` โดยไม่ส่งไปด้วย → "หัวหน้าฉันคือใคร" (= CTA การ์ด broadcast)
+  rc=0 ครบ 32/32. ตอนนี้ผูก identity ด้วย **canonical email** (ทะเบียนไม่มีคอลัมน์ AAD OID)
+  ผ่าน typed `PeopleContext`; แยก `IDENTITY_NOT_FOUND`/`IDENTITY_AMBIGUOUS`/`PROFILE_INACTIVE`
+  ออกจาก `NO_RESULT`. self detection เป็น deterministic ใน code (ภาษาไทยไม่มี word boundary —
+  regex ที่ต้องการ boundary อ่าน "หัวหน้าฉัน" ว่าไม่ใช่ self). kill-switch `PEOPLE_SELF_ENABLED=0`
+- **WP-02 multi-filter** — `SearchParams` ไม่มีฟิลด์ `role` เลย → เงื่อนไขตำแหน่งถูกทิ้งที่ LLM
+  boundary. เพิ่ม `role` + `countOnly`, AND semantics, `retrieval/roles.ts`, และ
+  `totalMatches/shownCount/truncated/candidateIds/filtersApplied`
+- **WP-03 response guard** — `postCheck` กันแค่ทิศ "แต่งเพิ่ม"; ไม่มีอะไรกันทิศ "ปฏิเสธผลที่หาเจอ"
+  → `validateResponse()` + template fallback + log `RESPONDER_VALIDATION_FAILED`.
+  **count/roster ไม่เรียก responder LLM แล้ว** (ลด latency + cost)
+- **WP-04 ETL** — เจอ 2 บั๊กเงียบ: divider เช็ค `/ลาออก/` ทุกเซลล์ (ตำแหน่งที่มีคำนี้ → ทิ้งคนนั้น
+  + ทุกคนใต้แถว) และ **NFKC พังไทย** (แตกสระอำ → หา header "ตำแหน่ง" ไม่เจอ → role filter พังหมด)
+  → ใช้ NFC + width fold. + duplicate email/supervisor validation, fail-closed publish,
+  freshness stamp (`bob:directory:meta`) → footer "ข้อมูลทะเบียน ณ ..."
+- **WP-05 alias** — `retrieval/aliases.ts` เก็บ *matcher* ไม่ใช่ชื่อทีม → ทะเบียนจริงบอกเองว่ามีทีมอะไร
+  → "ทีมบัญชี" ถามกลับเมื่อมี 2 ทีมจริง, ทีมที่เปลี่ยนชื่อ degrade เป็น raw match ไม่ใช่ 0
+- **WP-06 follow-up** — `extractIntent` รับ `opts.history` มาตั้งแต่แรก แค่ไม่เคยมีใครส่ง
+  (`context/store.ts` ยังไม่ wire โดยตั้งใจ: in-memory Map + Vercel ไม่การันตี warm instance เดิม)
+- **WP-07 observability** — intent+responder log `trace.generation()` แล้ว (เดิม PEOPLE ไม่ log
+  เลย = category เดียวที่เรียก LLM 2 ครั้งกลับรายงาน cost เป็น 0); แตก `usedFallback` เป็น
+  stage-specific + `errorStage` + stage timings; identityKey = hash ไม่ใช่ email
+- **Prompt** — `people-intent` v1 + `people-responder` v1 **เข้า Langfuse แล้ว** (non-dev แก้เองได้);
+  `router` v3→**v4** (eval 22/22 vs 20/22; v3 ส่ง tenure ไป HR). เจอบั๊ก: JSON reminder ใน
+  router user message ระบุ category list **ไม่มี PEOPLE** ทั้งที่ system prompt มี
+
+**Tests 161 → 267** · typecheck/build สะอาด · deploy + smoke 8/8 (2026-07-15)
+
+🔴 **ยังไม่พิสูจน์ end-to-end:** `CHAT_TEST_KEY` ไม่ได้ตั้งใน prod และ `api/chat.ts` ไม่มีฟิลด์
+`requester` → ขับ self-path จากนอก Teams ไม่ได้ **หลักฐานแรกต้องมาจากถามใน Teams**.
+ต้องรัน `/refresh` เพื่อให้ freshness footer โผล่. ค้าง: employment-status env รอค่าจริงจาก HR,
+audit log ยัง in-memory, WP-08/WP-10.2–10.6/WP-09 canary.
+→ รายละเอียดเต็ม: [`implementation/execution-log-2026-07.md`](./implementation/execution-log-2026-07.md)
+
 ---
 
 ## 6. 🔄 กำลังทำ / เฝ้าดู
@@ -274,6 +318,23 @@ rollback = ย้าย label `production` กลับ version เก่า.
 **ห้ามลบ placeholder** `{{KB_BUNDLE}}` `{{CURRENT_DATE}}` `{{user_name}}` `{{department}}`
 (โค้ด `.replace()` ตรงตัว ถ้าหายจะไม่ inject). ต้อง sync `prompts/fallback/*.txt` ด้วย.
 
+Prompt ที่แก้ได้: `router` · `hr` · `product` · `general` · `insight-analysis` ·
+`people-intent` · `people-responder` (2 ตัวหลังย้ายเข้า Langfuse 2026-07-15).
+`people-*` **ไม่มี placeholder** — query/FACTS เดินทางมาใน user message; มี contract test
+บังคับว่า fallback file ต้องตรงกับ inline constant.
+
+**CLI (สำหรับ Claude Code / งานที่ต้อง version+eval):** `npm run prompt`
+```
+npm run prompt get <name> [label]              # อ่านตัวที่ใช้จริง (default: production)
+npm run prompt create-candidate <name> <file>  # publish version ใหม่ label=candidate (inert)
+npm run prompt promote <name> <version>        # ย้าย label production
+```
+candidate ปลอดภัยเพราะ loader fetch `?label=production` เท่านั้น (`src/prompts/langfusePrompts.ts`).
+
+> 🔴 **ลำดับสำคัญ: deploy code ก่อน แล้วค่อย promote prompt** — ถ้า prompt ตัวใหม่ย้ายคำถามไป
+> path ที่ code ยังไม่พร้อม จะทำของที่ใช้ได้อยู่ให้พัง (เคสจริง 15 ก.ค.: router v4 ย้าย tenure
+> จาก HR → PEOPLE ทั้งที่ HR ตอบถูกอยู่แล้วผ่าน `profileBlock`)
+
 ### แก้ความรู้
 แก้ใน Outline → พิมพ์ `/refresh` ใน Teams (admin) หรือ `npm run refresh-kb`.
 - **ฝั่ง HR/Process:** แก้ใน collection **"HR Shared"** (HR ดูแลเอง; หมวดบนสุดเป็นตัวกำหนด:
@@ -329,7 +390,8 @@ field: `latency` เป็น **วินาที** (×1000), cost = `calculate
 ## 11. Related docs & Notion
 
 - [`migration-plan-v2.md`](./migration-plan-v2.md) — เหตุผลเชิงสถาปัตยกรรม (ทำไมเลิก n8n)
-- [`implementation/WP-00-discovery.md`](./implementation/WP-00-discovery.md) — architecture map + implementation state ล่าสุด
+- [`implementation/execution-log-2026-07.md`](./implementation/execution-log-2026-07.md) — **อ่านก่อน**: WP-00→07 + Prompt A/B/C (files/behavior/tests/risks/rollback รายWP), 3 จุดที่แผนระบุผิด, และ rollout log
+- [`implementation/WP-00-discovery.md`](./implementation/WP-00-discovery.md) — architecture map ยุค `/insight` (บางส่วนตกยุคแล้ว — execution log ใหม่กว่า)
 - [`implementation/metric-contract.md`](./implementation/metric-contract.md) — metric definitions และ decision ที่ยังรอ sign-off
 - [`implementation/G1-spikes.md`](./implementation/G1-spikes.md) — technical gates ก่อนต่อ `/insight` เข้า production
 - `_archive/docs/` — เอกสารยุค Phase-0 (n8n/Notion/Sheets) เก็บไว้อ้างอิงประวัติ; อย่าใช้เป็น checklist ปัจจุบัน
