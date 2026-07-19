@@ -55,6 +55,39 @@ test("parseRows: rows below the ลาออก divider become resigned, never a
   assert.deepEqual(resigned, ["carol@builk.com"]);
 });
 
+test("parseRows: a re-hire (row in both sections) stays active, leaves resigned, warns", () => {
+  const rows = [
+    header,
+    ["bird@builk.com", "นพรัตน์", "ทดสอบ", "Bird", "Test", "เบิร์ด", "CS Specialist",
+     "BOG", "Cx", "Success", "Senior", "15/12/2566", "boss@builk.com"],
+    ["พนักงานลาออก"],
+    header,
+    // Same person's OLD stint, kept below the divider as history.
+    ["bird@builk.com", "นพรัตน์", "ทดสอบ", "Bird", "Test", "เบิร์ด", "Implementor",
+     "BOG", "Pojjaman", "Client Solution", "Officer", "01/06/2552", ""],
+    ["carol@builk.com", "แครอล", "ออก", "Carol", "Out", "", "", "", "", "", "", "", ""],
+  ];
+  const { active, resigned, duplicateEmails, warnings } = parseRows(rows);
+  assert.deepEqual(Object.keys(active), ["bird@builk.com"]);
+  assert.equal(active["bird@builk.com"]!.position, "CS Specialist"); // current stint, not the old row
+  assert.deepEqual(resigned, ["carol@builk.com"]); // re-hire excluded → broadcasts reach them
+  assert.deepEqual(duplicateEmails, []); // cross-section is a re-hire, not ambiguity
+  assert.ok(warnings.some((w) => w.includes("re-hired") && w.includes("bird@builk.com")));
+});
+
+test("parseRows: a duplicate within the SAME section is still flagged", () => {
+  const rows = [
+    header,
+    ["alice@builk.com", "อลิส", "หนึ่ง", "Alice", "One", "", "Dev",
+     "BOG", "Eng", "Platform", "Senior", "17/05/2548", ""],
+    ["alice@builk.com", "อลิส", "สอง", "Alice", "Two", "", "QA",
+     "BOG", "Eng", "Quality", "Junior", "01/01/2560", ""],
+  ];
+  const { duplicateEmails, warnings } = parseRows(rows);
+  assert.deepEqual(duplicateEmails, ["alice@builk.com"]);
+  assert.ok(warnings.some((w) => w.includes("duplicate email")));
+});
+
 test("parseRows: throws when there is no Email header", () => {
   assert.throws(() => parseRows([["foo", "bar"], ["a", "b"]]), /header row/);
 });

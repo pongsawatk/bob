@@ -31,9 +31,17 @@ test("a duplicated email inside the active section is reported, not silently col
   assert.ok(p.warnings.some((w) => /dupe@x\.com/.test(w)), "the warning must name the offending address");
 });
 
-test("an email appearing in both the active and resigned sections is reported", () => {
+// An email in BOTH sections is a re-hire (HR keeps the old stint below the divider
+// as history): the active row wins, the resigned projection drops it, and it is
+// warned — not treated as ambiguity, and never a reason to refuse the refresh
+// (this exact case blocked /refresh in production on 2026-07-19).
+test("an email appearing in both sections is a re-hire: active wins, warned, not a duplicate", () => {
   const p = parseRows([HEADER, row("both@x.com", "ยังอยู่"), ["พนักงานลาออก"], HEADER, row("both@x.com", "ลาออกแล้ว")]);
-  assert.deepEqual(p.duplicateEmails, ["both@x.com"]);
+  assert.deepEqual(Object.keys(p.active), ["both@x.com"]);
+  assert.equal(p.active["both@x.com"]?.fullNameTh, "ยังอยู่ นามสกุล"); // current stint's row
+  assert.deepEqual(p.resigned, []);
+  assert.deepEqual(p.duplicateEmails, []);
+  assert.ok(p.warnings.some((w) => /re-hired/.test(w) && /both@x\.com/.test(w)));
 });
 
 test("clean data reports no duplicates", () => {

@@ -134,12 +134,14 @@ export interface UnresolvedSupervisor {
 
 export interface ParsedDirectory {
   active: Record<string, Profile>;
-  /** Emails listed below the "พนักงานลาออก" divider — ex-staff. */
+  /** Emails listed below the "พนักงานลาออก" divider — ex-staff. Never includes a
+   *  re-hire: an email that also has an active row is current staff (see parseRows). */
   resigned: string[];
-  /** Addresses seen more than once (within active, or across the section divider).
-   *  `active` is keyed by email, so a duplicate silently collapses two people into
-   *  the last row written — and a self-identity answer would then be about the wrong
-   *  person. Surfaced so identity resolution can refuse instead of guessing. */
+  /** Addresses seen more than once WITHIN a section. `active` is keyed by email, so
+   *  a duplicate silently collapses two people into the last row written — and a
+   *  self-identity answer would then be about the wrong person. Surfaced so identity
+   *  resolution can refuse instead of guessing. An email in both sections is NOT a
+   *  duplicate — that's a re-hire (old stint kept below the divider as history). */
   duplicateEmails: string[];
   /** Supervisor cells that resolve to nobody — reported, never guessed. */
   unresolvedSupervisors: UnresolvedSupervisor[];
@@ -179,8 +181,7 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
   const iOwn = col(/ownership|product\s*owner|ผู้รับผิดชอบ|รับผิดชอบ|ดูแลผลิตภัณฑ์/i); // G0 column (HR)
 
   const active: Record<string, Profile> = {};
-  const resigned: string[] = [];
-  const seen = new Set<string>();
+  const resignedSeen = new Set<string>();
   const dupes = new Set<string>();
   let inResigned = false;
   for (const r of rows.slice(headerIdx + 1)) {
@@ -193,11 +194,12 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
     // the resigned section, dropping them from the directory with no error.
     if (!isDataRow && r.some((c) => /ลาออก/.test(String(c ?? "")))) { inResigned = true; continue; }
     if (!isDataRow) continue; // trailing/blank/section-header rows
-    // Track across BOTH sections: the same address on an active and a resigned row is
-    // the ambiguity that matters most, since it decides whether we serve them at all.
-    if (seen.has(email)) dupes.add(email);
-    seen.add(email);
-    if (inResigned) { resigned.push(email); continue; }
+    if (inResigned) {
+      if (resignedSeen.has(email)) dupes.add(email);
+      resignedSeen.add(email);
+      continue;
+    }
+    if (active[email]) dupes.add(email);
     active[email] = {
       email,
       fullNameTh: [clean(r[iFirstTh]), clean(r[iLastTh])].filter(Boolean).join(" "),
@@ -217,9 +219,17 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
     };
   }
 
+  // Re-hires: HR keeps the old employment stint below the ลาออก divider as history,
+  // then adds a fresh row on top when the person returns. The active row is the
+  // current truth, so they must NOT land in the resigned projection (it would drop
+  // them from broadcasts and mark them ex-staff). Surfaced as a warning, not an error.
+  const rehired = [...resignedSeen].filter((e) => active[e]).sort();
+  const resigned = [...resignedSeen].filter((e) => !active[e]);
+
   const duplicateEmails = [...dupes].sort();
   const unresolvedSupervisors = validateSupervisors(active);
   const warnings: string[] = [];
+  for (const e of rehired) warnings.push(`re-hired (row in both sections, active row wins): ${e}`);
   for (const e of duplicateEmails) warnings.push(`duplicate email in the sheet: ${e}`);
   if (unresolvedSupervisors.length) {
     warnings.push(`${unresolvedSupervisors.length} profile(s) name a supervisor that resolves to nobody`);
