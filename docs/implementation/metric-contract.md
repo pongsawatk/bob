@@ -10,8 +10,8 @@ Grounding legend: **[V]** verified in code that writes the field · **[A]** assu
 ---
 
 ## 0. Data source & keys
-- Source: Langfuse **traces** (one per user turn) + their child **generations** (`router`, `domain:<cat>`). Pulled via public REST API `GET /api/public/observations` and `/api/public/traces`, paginated. **[V]** (observations) / **[A]** (traces endpoint shape).
-- Trace shape written by `src/pipeline/index.ts`: `id`, `name:"bob-chat"`, `userId`, `sessionId`, `input`, `metadata.{category,confidence,hasProfile,latencyMs,inputTokens,outputTokens,cacheReadTokens,kbSelect,timings}`, `tags:[channel, category, "llm"|"precache"]`. **[V]**
+- Source: Langfuse v2 **observations**: one root `bob-chat` observation per user turn plus child generations (`router`, `domain:<cat>`). Pulled via `GET /api/public/v2/observations` with cursor pagination; rows are grouped by `traceId`, root I/O/metadata defines the turn, and cost is summed from children. **[V]**
+- Observation shape written by `src/pipeline/index.ts` + `src/obs/langfuse.ts`: root `name:"bob-chat"`, `userId`, `sessionId`, input/output, metadata; child generations carry model, version, usage, cost, and the propagated correlating attributes. Stable channel tags propagate before child creation; late-bound category/type tags are stamped on the root trace attributes and retained in root metadata for the analytics contract. **[V]**
 - **Analytics key = pseudonymous.** Never use email/name as the grouping key in output. Hash `userId` → short id for the report. **[V that userId today is email-or-aadId]**
 
 ## 1. Timezone & window

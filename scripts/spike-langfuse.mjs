@@ -11,7 +11,7 @@ const { fetchTraces, normalizeAll, windowFor } = await import("../src/analytics/
 
 const DAYS = Number(process.argv.find((a) => /^\d+$/.test(a))) || 7;
 const creds = {
-  host: (process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, ""),
+  host: (process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, ""),
   publicKey: process.env.LANGFUSE_PUBLIC_KEY,
   secretKey: process.env.LANGFUSE_SECRET_KEY,
 };
@@ -22,10 +22,10 @@ if (!creds.publicKey || !creds.secretKey) {
 
 const { current } = windowFor(DAYS);
 
-// Single paginated fetch (limit=100/page). >100 results ⇒ pages were joined.
+// Cursor-paginated v2 observation fetch, reconstructed to one row per trace.
 const raw = await fetchTraces(creds, current);
 console.log(`\n=== Langfuse spike — last ${DAYS}d ===`);
-console.log(`fetched ${raw.length} traces` + (raw.length > 100 ? `  → pagination joined ${Math.ceil(raw.length / 100)} pages ✓` : ` (single page)`));
+console.log(`reconstructed ${raw.length} traces from v2 observations`);
 
 if (!raw.length) {
   console.log("no traces in window — widen --days");
@@ -57,5 +57,5 @@ console.log(`  raw traces             ${raw.length}`);
 console.log(`  after dedupe+exclusion ${turns.length}  (dropped ${raw.length - turns.length}: test/bot/non-bob-chat/dup)`);
 console.log(`  missing category       ${noCat}`);
 console.log(`  missing latency        ${noLat}   ← explains completeness < 100%`);
-console.log(`\nverdict: pagination + trace schema confirmed. Endpoint is rate-limited (429) →`);
-console.log(`fetchTraces now backs off on 429/Retry-After; production job must fetch with limit=100.`);
+console.log(`\nverdict: v2 cursor pagination + observation-to-trace reconstruction confirmed.`);
+console.log(`fetchObservations backs off on 429/Retry-After and rejects repeated cursors.`);

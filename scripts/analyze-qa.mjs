@@ -1,5 +1,5 @@
 // Analyze real user Q&A from Langfuse traces.
-// Usage: node scripts/analyze-qa.mjs [days=2] [--raw]
+// Usage: npx tsx scripts/analyze-qa.mjs [days=2] [--raw]
 import { loadEnv } from "./_load-env.mjs";
 loadEnv();
 
@@ -8,49 +8,17 @@ const RAW = process.argv.includes("--raw");
 
 const PUB = process.env.LANGFUSE_PUBLIC_KEY;
 const SEC = process.env.LANGFUSE_SECRET_KEY;
-const HOST = (process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
+const HOST = (process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
 if (!PUB || !SEC) {
   console.error("Missing LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY");
   process.exit(1);
 }
-const AUTH = "Basic " + Buffer.from(`${PUB}:${SEC}`).toString("base64");
 const fromDate = new Date(Date.now() - DAYS * 864e5);
-
-async function apiFetch(path) {
-  for (let attempt = 1; ; attempt++) {
-    const res = await fetch(`${HOST}${path}`, { headers: { Authorization: AUTH } });
-    if (res.ok) return res.json();
-    if (res.status >= 500 && attempt < 4) {
-      await new Promise((r) => setTimeout(r, 1500 * attempt));
-      continue;
-    }
-    throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-  }
-}
-
-// Fetch all traces in the window
-async function fetchAllTraces() {
-  const all = [];
-  for (let page = 1; ; page++) {
-    const url = `/api/public/traces?limit=100&page=${page}&fromTimestamp=${encodeURIComponent(fromDate.toISOString())}`;
-    const body = await apiFetch(url);
-    const data = body.data || [];
-    all.push(...data);
-    const totalPages = body.meta?.totalPages ?? 1;
-    process.stderr.write(`\rfetched page ${page}/${totalPages} traces (${all.length} total)`);
-    if (page >= totalPages || data.length === 0) break;
-  }
-  process.stderr.write("\n");
-  return all;
-}
-
-// Get trace detail (observations/messages)
-async function fetchTraceDetail(traceId) {
-  const body = await apiFetch(`/api/public/traces/${traceId}`);
-  return body;
-}
-
-const allTraces = await fetchAllTraces();
+const { fetchTraces } = await import("../src/analytics/langfuse.ts");
+const allTraces = await fetchTraces(
+  { host: HOST, publicKey: PUB, secretKey: SEC },
+  { fromMs: fromDate.getTime(), toMs: Date.now() },
+);
 
 // Filter: only real user emails (contains @)
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -71,23 +39,9 @@ for (const [email, traces] of sortedUsers) {
   console.log(`  ${email}: ${traces.length} turns`);
 }
 
-// Fetch trace details for real users (limit to avoid rate limits)
-console.log("\n=== Fetching trace details for Q&A content ===");
+// Root observation I/O replaces the removed trace-detail endpoint.
 const sampleTraces = realUserTraces.slice(0, Math.min(realUserTraces.length, 100));
-const details = [];
-
-for (let i = 0; i < sampleTraces.length; i++) {
-  process.stderr.write(`\rfetching detail ${i + 1}/${sampleTraces.length}`);
-  try {
-    const detail = await fetchTraceDetail(sampleTraces[i].id);
-    details.push({ trace: sampleTraces[i], detail });
-  } catch (e) {
-    process.stderr.write(` [error: ${e.message}]`);
-  }
-  // small delay to be nice to the API
-  if (i % 10 === 9) await new Promise((r) => setTimeout(r, 300));
-}
-process.stderr.write("\n");
+const details = sampleTraces.map((trace) => ({ trace, detail: trace }));
 
 // Extract user messages and BOB responses
 const qaPairs = [];
@@ -113,19 +67,6 @@ for (const { trace, detail } of details) {
     else if (detail.output?.text) bobResponse = detail.output.text;
     else if (detail.output?.content) bobResponse = detail.output.content;
     else bobResponse = JSON.stringify(detail.output).slice(0, 300);
-  }
-
-  // Also try from observations
-  if (!userMsg && detail.observations) {
-    for (const obs of detail.observations) {
-      if (obs.input && !userMsg) {
-        const inp = obs.input;
-        if (Array.isArray(inp)) {
-          const userPart = inp.filter((m) => m?.role === "user").pop();
-          if (userPart) userMsg = typeof userPart.content === "string" ? userPart.content : JSON.stringify(userPart.content).slice(0, 500);
-        }
-      }
-    }
   }
 
   qaPairs.push({

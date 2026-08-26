@@ -16,7 +16,7 @@ if (![7, 14, 30].includes(DAYS)) {
 }
 
 const creds = {
-  host: (process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, ""),
+  host: (process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, ""),
   publicKey: process.env.LANGFUSE_PUBLIC_KEY,
   secretKey: process.env.LANGFUSE_SECRET_KEY,
 };

@@ -1,8 +1,7 @@
-import crypto from "node:crypto";
 import { checkPrecache } from "./precache.js";
 import { routeMessage, type Category } from "./router.js";
 import { callDomainBot } from "./domainBot.js";
-import { startTrace, flushObs } from "../obs/langfuse.js";
+import { runWithTrace, type LFTrace } from "../obs/langfuse.js";
 import type { LLMMessage } from "../llm/openrouter.js";
 import { handlePeopleQuery, defaultPeopleDeps } from "../people/connector.js";
 import type { RequesterIdentity } from "../people/identity.js";
@@ -53,13 +52,19 @@ export interface PipelineOutput {
 let instanceWarmed = false;
 
 export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
+  const { message, userId, channel = "teams", sessionId } = input;
+  return runWithTrace({ userId, sessionId, channel, input: message }, (trace) =>
+    runPipelineTraced(input, trace),
+  );
+}
+
+async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<PipelineOutput> {
   const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [], profileBlock, requester } = input;
-  const traceId = crypto.randomUUID();
+  const traceId = trace.traceId;
   const t0 = Date.now();
   const coldStart = !instanceWarmed;
   instanceWarmed = true;
 
-  const trace = startTrace({ traceId, userId, sessionId, input: message });
   const baseMeta = { channel, department, userName };
 
   // ── Tier 0: Pre-cache ──────────────────────────────────────────
@@ -73,7 +78,6 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
       metadata: { ...baseMeta, category: precacheHit.category, fromCache: true, coldStart },
       tags: [channel, precacheHit.category, "precache"],
     });
-    await flushObs();
     return {
       traceId,
       category: precacheHit.category,
@@ -156,7 +160,6 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
       },
       tags: [channel, "PEOPLE", "llm"],
     });
-    await flushObs();
     return {
       traceId,
       category: "PEOPLE",
@@ -233,8 +236,6 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineOutput>
     },
     tags: [channel, routed.category, "llm"],
   });
-
-  await flushObs();
 
   return {
     traceId,

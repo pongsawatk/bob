@@ -5,8 +5,8 @@
 //   • PURE CORE (normalizeTrace / normalizeAll / aggregate / percentile /
 //     bangkokDayKey) — no I/O, no env, no clock except what's passed in. Golden-tested
 //     in test/analytics.test.ts. THIS is where every number comes from (never the LLM).
-//   • THIN I/O (fetchTraces) — paginates GET /api/public/traces. `fetch` is injectable
-//     so it can be tested without a network; exercised for real in WP-12/13.
+//   • THIN I/O (fetchTraces) — cursor-paginates GET /api/public/v2/observations,
+//     groups rows by traceId, and is testable with an injected `fetch`.
 //
 // Source shape is Langfuse's TraceWithDetails (verified against langfuse-core types):
 // trace-level `latency` (seconds), `totalCost` (USD), `userId`, `sessionId`,
@@ -34,10 +34,33 @@ export interface RawTrace {
   /** The user's message. Kept for redacted evidence sampling (report.ts) only —
    *  it is raw PII and must pass through redact() before leaving the process. */
   input?: unknown;
+  output?: unknown;
   metadata?: unknown; // { category, latencyMs, outputTokens, ... } stamped by the pipeline
   tags?: string[] | null; // [channel, category, "llm"|"precache"]
   latency?: number | null; // seconds
   totalCost?: number | null; // USD
+}
+
+/** Observation row returned by GET /api/public/v2/observations. */
+export interface RawObservation {
+  id: string;
+  traceId: string | null;
+  startTime: string;
+  endTime: string | null;
+  parentObservationId: string | null;
+  type: string;
+  isRootObservation?: boolean;
+  name?: string | null;
+  userId?: string | null;
+  sessionId?: string | null;
+  input?: unknown;
+  output?: unknown;
+  metadata?: unknown;
+  latency?: number | null;
+  totalCost?: number | null;
+  costDetails?: Record<string, number>;
+  tags?: string[] | null;
+  traceName?: string | null;
 }
 
 /** A normalized, contract-shaped user turn. rawUserId stays internal (never emitted). */
@@ -126,6 +149,9 @@ export function normalizeTrace(t: RawTrace): NormalizedTurn | null {
 
   const md = (t.metadata && typeof t.metadata === "object" ? t.metadata : {}) as Record<string, unknown>;
   const tags = t.tags ?? [];
+  const metadataTags = Array.isArray(md.tags)
+    ? md.tags.filter((tag): tag is string => typeof tag === "string")
+    : [];
   const catRaw = typeof md.category === "string" ? md.category : undefined;
   const outputTokens = num(md.outputTokens);
   const cap = catRaw ? OUTPUT_TOKEN_CAP[catRaw] : undefined;
@@ -144,7 +170,9 @@ export function normalizeTrace(t: RawTrace): NormalizedTurn | null {
     costUsd: num(t.totalCost),
     outputTokens,
     truncated: cap != null && outputTokens >= cap,
-    fromCache: tags.includes("precache"), // order-independent (Langfuse sorts tags)
+    // v5 requires trace tags to be known before child observations start. The
+    // pipeline also records late-bound classification tags on root metadata.
+    fromCache: tags.includes("precache") || metadataTags.includes("precache") || md.fromCache === true,
     // Langfuse returns tags alphabetically sorted, so tags[0] is NOT reliably the
     // channel (confirmed by G1 spike). Read metadata.channel, which the pipeline
     // stamps explicitly; fall back to tags only if absent.
@@ -234,7 +262,7 @@ export function windowFor(days: number, now: number = Date.now()): { current: Wi
   };
 }
 
-// ── Thin I/O layer (not unit-tested; `fetch` injectable) ───────────────
+// ── Thin I/O layer (`fetch` injectable) ────────────────────────────────
 
 export interface LangfuseCreds {
   host: string;
@@ -246,40 +274,80 @@ type FetchLike = (url: string, init?: { headers?: Record<string, string> }) => P
   ok: boolean;
   status: number;
   statusText: string;
-  headers?: { get: (name: string) => string | null };
+  headers?: { get?: (name: string) => string | null };
   text: () => Promise<string>;
   json: () => Promise<unknown>;
 }>;
 
-export interface TracePage {
-  data: RawTrace[];
-  totalPages: number;
+export interface ObservationPage {
+  data: RawObservation[];
+  nextCursor: string | null;
 }
 
-/** Fetch ONE page of traces (with 5xx/429 backoff). The resumable job fetches page by
- *  page so it can checkpoint + yield before the ~58s invocation cap (WP-12). */
-export async function fetchTracesPage(
+export interface ObservationFetchOptions {
+  fetchImpl?: FetchLike;
+  pageLimit?: number;
+  maxAttempts?: number;
+  type?: string;
+  /** Defaults to bob-chat; null disables trace-name filtering. */
+  traceName?: string | null;
+  fields?: string;
+}
+
+const TRACE_FIELDS = "core,basic,io,metadata,usage,metrics,trace_context";
+
+const parseJsonField = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  const s = value.trim();
+  if (!s || !["{", "[", '"'].includes(s[0]!)) return value;
+  try {
+    return JSON.parse(s);
+  } catch {
+    return value;
+  }
+};
+
+function observationUrl(
   creds: LangfuseCreds,
   window: Window,
-  page: number,
-  opts: { fetchImpl?: FetchLike; pageLimit?: number; maxAttempts?: number } = {}
-): Promise<TracePage> {
+  cursor: string | null,
+  opts: ObservationFetchOptions,
+): string {
+  const filters: Array<Record<string, unknown>> = [
+    { type: "datetime", column: "startTime", operator: ">=", value: new Date(window.fromMs).toISOString() },
+    { type: "datetime", column: "startTime", operator: "<", value: new Date(window.toMs).toISOString() },
+  ];
+  if (opts.traceName !== null) {
+    filters.push({ type: "string", column: "traceName", operator: "=", value: opts.traceName ?? TRACE_NAME });
+  }
+  if (opts.type) filters.push({ type: "string", column: "type", operator: "=", value: opts.type });
+
+  const query = new URLSearchParams({
+    limit: String(opts.pageLimit ?? 100),
+    fields: opts.fields ?? TRACE_FIELDS,
+    filter: JSON.stringify(filters),
+  });
+  if (cursor) query.set("cursor", cursor);
+  return `${creds.host.replace(/\/$/, "")}/api/public/v2/observations?${query}`;
+}
+
+/** Fetch one cursor page from the v2 observations API with bounded retry/backoff. */
+export async function fetchObservationsPage(
+  creds: LangfuseCreds,
+  window: Window,
+  cursor: string | null = null,
+  opts: ObservationFetchOptions = {},
+): Promise<ObservationPage> {
   const f = opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
   const auth = "Basic " + Buffer.from(`${creds.publicKey}:${creds.secretKey}`).toString("base64");
-  const host = creds.host.replace(/\/$/, "");
-  const from = new Date(window.fromMs).toISOString();
-  const to = new Date(window.toMs).toISOString();
-  const limit = opts.pageLimit ?? 100;
   const maxAttempts = opts.maxAttempts ?? 5;
-  const url =
-    `${host}/api/public/traces?limit=${limit}&page=${page}` +
-    `&fromTimestamp=${encodeURIComponent(from)}&toTimestamp=${encodeURIComponent(to)}`;
+  const url = observationUrl(creds, window, cursor, opts);
 
   for (let attempt = 1; ; attempt++) {
     const res = await f(url, { headers: { Authorization: auth } });
     if (res.ok) {
-      const body = (await res.json()) as { data?: RawTrace[]; meta?: { totalPages?: number } };
-      return { data: body.data ?? [], totalPages: body.meta?.totalPages ?? 1 };
+      const body = (await res.json()) as { data?: RawObservation[]; meta?: { cursor?: string } };
+      return { data: body.data ?? [], nextCursor: body.meta?.cursor ?? null };
     }
     const retryable = res.status >= 500 || res.status === 429;
     if (retryable && attempt < maxAttempts) {
@@ -287,49 +355,78 @@ export async function fetchTracesPage(
       await new Promise((r) => setTimeout(r, retryAfter > 0 ? retryAfter * 1000 : 1500 * attempt));
       continue;
     }
-    throw new Error(`GET /traces ${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`);
+    throw new Error(`GET /v2/observations ${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`);
   }
 }
 
-/** Paginated GET /api/public/traces over a window. Retries 5xx AND 429 (the traces
- *  endpoint is rate-limited — confirmed by G1 spike), honoring Retry-After. Use the
- *  max page size (100) to minimize request count against that limit. */
+/** Fetch all cursor pages. A repeated cursor is rejected to avoid an infinite loop. */
+export async function fetchObservations(
+  creds: LangfuseCreds,
+  window: Window,
+  opts: ObservationFetchOptions = {},
+): Promise<RawObservation[]> {
+  const all: RawObservation[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+  for (;;) {
+    const page = await fetchObservationsPage(creds, window, cursor, opts);
+    all.push(...page.data);
+    if (!page.nextCursor || page.data.length === 0) break;
+    if (seenCursors.has(page.nextCursor)) throw new Error("GET /v2/observations repeated cursor");
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+  return all;
+}
+
+/** Collapse observation rows to the turn-shaped contract consumed by BOB. */
+export function observationsToTraces(observations: RawObservation[]): RawTrace[] {
+  const grouped = new Map<string, RawObservation[]>();
+  for (const observation of observations) {
+    if (!observation.traceId) continue;
+    const group = grouped.get(observation.traceId) ?? [];
+    group.push(observation);
+    grouped.set(observation.traceId, group);
+  }
+
+  const traces: RawTrace[] = [];
+  for (const [traceId, group] of grouped) {
+    const root =
+      group.find((o) => o.isRootObservation === true) ??
+      group.find((o) => o.parentObservationId == null) ??
+      [...group].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))[0];
+    if (!root) continue;
+    const totalCost = group.reduce((sum, o) => sum + num(o.totalCost ?? o.costDetails?.total), 0);
+    const metadata = parseJsonField(root.metadata);
+    const metadataLatency =
+      metadata && typeof metadata === "object" && typeof (metadata as Record<string, unknown>).latencyMs === "number"
+        ? ((metadata as Record<string, number>).latencyMs ?? 0) / 1000
+        : null;
+    const derivedLatency = root.endTime
+      ? Math.max(0, Date.parse(root.endTime) - Date.parse(root.startTime)) / 1000
+      : null;
+    traces.push({
+      id: traceId,
+      timestamp: root.startTime,
+      name: root.traceName ?? root.name,
+      userId: root.userId,
+      sessionId: root.sessionId,
+      input: parseJsonField(root.input),
+      output: parseJsonField(root.output),
+      metadata,
+      tags: root.tags,
+      latency: root.latency ?? derivedLatency ?? metadataLatency,
+      totalCost,
+    });
+  }
+  return traces.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+}
+
+/** Observation-backed compatibility wrapper for existing analytics callers. */
 export async function fetchTraces(
   creds: LangfuseCreds,
   window: Window,
-  opts: { fetchImpl?: FetchLike; pageLimit?: number; maxAttempts?: number } = {}
+  opts: ObservationFetchOptions = {},
 ): Promise<RawTrace[]> {
-  const f = (opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike));
-  const auth = "Basic " + Buffer.from(`${creds.publicKey}:${creds.secretKey}`).toString("base64");
-  const host = creds.host.replace(/\/$/, "");
-  const from = new Date(window.fromMs).toISOString();
-  const to = new Date(window.toMs).toISOString();
-  const limit = opts.pageLimit ?? 100;
-  const maxAttempts = opts.maxAttempts ?? 5;
-
-  const all: RawTrace[] = [];
-  for (let page = 1; ; page++) {
-    const url =
-      `${host}/api/public/traces?limit=${limit}&page=${page}` +
-      `&fromTimestamp=${encodeURIComponent(from)}&toTimestamp=${encodeURIComponent(to)}`;
-    let res: Awaited<ReturnType<FetchLike>> | undefined;
-    for (let attempt = 1; ; attempt++) {
-      res = await f(url, { headers: { Authorization: auth } });
-      if (res.ok) break;
-      const retryable = res.status >= 500 || res.status === 429;
-      if (retryable && attempt < maxAttempts) {
-        const retryAfter = Number(res.headers?.get?.("retry-after")) || 0;
-        const waitMs = retryAfter > 0 ? retryAfter * 1000 : 1500 * attempt;
-        await new Promise((r) => setTimeout(r, waitMs));
-        continue;
-      }
-      throw new Error(`GET /traces ${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`);
-    }
-    const body = (await res.json()) as { data?: RawTrace[]; meta?: { totalPages?: number } };
-    const data = body.data ?? [];
-    all.push(...data);
-    const totalPages = body.meta?.totalPages ?? 1;
-    if (page >= totalPages || data.length === 0) break;
-  }
-  return all;
+  return observationsToTraces(await fetchObservations(creds, window, opts));
 }

@@ -14,7 +14,7 @@
 import { loadEnv } from "./_load-env.mjs";
 import { readFileSync } from "node:fs";
 loadEnv();
-const host = process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
+const host = process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
 const auth = Buffer.from(`${process.env.LANGFUSE_PUBLIC_KEY}:${process.env.LANGFUSE_SECRET_KEY}`).toString("base64");
 const H = { Authorization: `Basic ${auth}`, "Content-Type": "application/json" };
 

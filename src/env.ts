@@ -24,7 +24,8 @@ export const env = {
   // Langfuse (optional — bot still works without it)
   LANGFUSE_PUBLIC_KEY: opt("LANGFUSE_PUBLIC_KEY"),
   LANGFUSE_SECRET_KEY: opt("LANGFUSE_SECRET_KEY"),
-  LANGFUSE_HOST: opt("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+  // Standard v5 name first; legacy project env stays supported during rollout.
+  LANGFUSE_HOST: opt("LANGFUSE_BASE_URL", opt("LANGFUSE_HOST", "https://cloud.langfuse.com")),
 
   // Upstash (optional — Phase 2)
   UPSTASH_REDIS_REST_URL:   opt("UPSTASH_REDIS_REST_URL"),

@@ -15,7 +15,7 @@ const NAMES = ["router", "hr", "product", "general"];
 
 const pk = process.env.LANGFUSE_PUBLIC_KEY;
 const sk = process.env.LANGFUSE_SECRET_KEY;
-const host = process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
+const host = process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
 if (!pk || !sk) {
   console.error("LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set");
   process.exit(1);

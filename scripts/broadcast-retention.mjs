@@ -2,7 +2,7 @@
 // against Langfuse traces (userId == email) and measure who tried BOB after the
 // broadcast and who came back in week 2.
 //
-// Usage: node scripts/broadcast-retention.mjs [--broadcast=2026-07-08]
+// Usage: npx tsx scripts/broadcast-retention.mjs [--broadcast=2026-07-08]
 //                                             [--roster=test-results/broadcast-roster-launch-2026-07.csv]
 //                                             [--list]
 // Windows use ICT (UTC+7) day boundaries. week1 = broadcast day .. +6, week2 = +7 .. +13.
@@ -21,12 +21,11 @@ const ICT_MS = 7 * 3600e3;
 
 const PUB = process.env.LANGFUSE_PUBLIC_KEY;
 const SEC = process.env.LANGFUSE_SECRET_KEY;
-const HOST = (process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
+const HOST = (process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
 if (!PUB || !SEC) {
   console.error("Missing LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY");
   process.exit(1);
 }
-const AUTH = "Basic " + Buffer.from(`${PUB}:${SEC}`).toString("base64");
 
 // ── Roster ────────────────────────────────────────────────────────
 // CSV columns: email,name,nickname,variant,risk
@@ -56,30 +55,11 @@ const daysElapsed = ictDayIndex(now.toISOString());
 
 // ── Fetch traces from broadcast day onward ────────────────────────
 const fromTimestamp = new Date(Date.parse(BROADCAST + "T00:00:00Z") - ICT_MS).toISOString();
-async function fetchPage(page) {
-  const url =
-    `${HOST}/api/public/traces?limit=100&page=${page}` +
-    `&fromTimestamp=${encodeURIComponent(fromTimestamp)}`;
-  for (let attempt = 1; ; attempt++) {
-    const res = await fetch(url, { headers: { Authorization: AUTH } });
-    if (res.ok) return res.json();
-    if (res.status >= 500 && attempt < 4) {
-      await new Promise((r) => setTimeout(r, 1500 * attempt));
-      continue;
-    }
-    throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-  }
-}
-const traces = [];
-for (let page = 1; ; page++) {
-  const body = await fetchPage(page);
-  const data = body.data || [];
-  traces.push(...data);
-  const totalPages = body.meta?.totalPages ?? 1;
-  process.stderr.write(`\rfetched page ${page}/${totalPages} (${traces.length} traces)`);
-  if (page >= totalPages || data.length === 0) break;
-}
-process.stderr.write("\n");
+const { fetchTraces } = await import("../src/analytics/langfuse.ts");
+const traces = await fetchTraces(
+  { host: HOST, publicKey: PUB, secretKey: SEC },
+  { fromMs: Date.parse(fromTimestamp), toMs: Date.now() },
+);
 
 // ── Per-recipient activity (roster join) ──────────────────────────
 // email -> { firstInput, dayIdxSet:Set<number> }

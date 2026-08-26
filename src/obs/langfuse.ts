@@ -1,5 +1,15 @@
+import crypto from "node:crypto";
+import { LangfuseClient } from "@langfuse/client";
+import { LangfuseSpanProcessor } from "@langfuse/otel";
+import {
+  LangfuseOtelSpanAttributes,
+  propagateAttributes,
+  startActiveObservation,
+  startObservation,
+  type LangfuseSpan,
+} from "@langfuse/tracing";
+import { NodeSDK } from "@opentelemetry/sdk-node";
 import { env } from "../env.js";
-import { Langfuse } from "langfuse";
 
 export interface LFSpan {
   end: (output: unknown) => void;
@@ -20,85 +30,145 @@ export interface LFGeneration {
 }
 
 export interface LFTraceStart {
-  traceId: string;
   userId: string;
   /** Groups all turns of one conversation in Langfuse's Sessions view. */
   sessionId?: string;
+  channel?: string;
   input?: string;
 }
 
 export interface LFTrace {
+  /** The real OpenTelemetry/Langfuse trace id returned to feedback scoring. */
+  traceId: string;
   span: (name: string) => LFSpan;
   generation: (gen: LFGeneration) => void;
   update: (opts: { output: string; metadata?: Record<string, unknown>; tags?: string[] }) => void;
 }
 
-const noopSpan: LFSpan = { end: () => {} };
-const noopTrace: LFTrace = { span: () => noopSpan, generation: () => {}, update: () => {} };
+const configured = Boolean(env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY);
 
-// One client per warm instance. We deliberately do NOT set flushAt:1 / auto-flush:
-// on serverless that would fire background (un-awaited) flushes which get killed
-// when the lambda freezes after responding → traces lost. Instead events stay
-// queued (~5 per request, below the default flushAt) and are sent in a single
-// awaited flushObs() before the handler returns.
-const _lf: Langfuse | null =
-  env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY
-    ? new Langfuse({
-        publicKey: env.LANGFUSE_PUBLIC_KEY,
-        secretKey: env.LANGFUSE_SECRET_KEY,
-        baseUrl: env.LANGFUSE_HOST,
-      })
-    : null;
+// Langfuse v5 is OpenTelemetry-based. Serverless functions use immediate export,
+// then forceFlush() after the root observation has ended so no span is left behind
+// when Vercel freezes the instance.
+const spanProcessor = configured
+  ? new LangfuseSpanProcessor({
+      publicKey: env.LANGFUSE_PUBLIC_KEY,
+      secretKey: env.LANGFUSE_SECRET_KEY,
+      baseUrl: env.LANGFUSE_HOST,
+      exportMode: "immediate",
+    })
+  : null;
 
-console.log(`[langfuse] ${_lf ? `enabled (${env.LANGFUSE_HOST})` : "disabled — keys missing"}`);
+const otelSdk = spanProcessor ? new NodeSDK({ spanProcessors: [spanProcessor] }) : null;
+otelSdk?.start();
 
-export function startTrace({ traceId, userId, sessionId, input }: LFTraceStart): LFTrace {
-  if (!_lf) return noopTrace;
+const client = configured
+  ? new LangfuseClient({
+      publicKey: env.LANGFUSE_PUBLIC_KEY,
+      secretKey: env.LANGFUSE_SECRET_KEY,
+      baseUrl: env.LANGFUSE_HOST,
+    })
+  : null;
 
-  const t = _lf.trace({ id: traceId, name: "bob-chat", userId, sessionId, input });
+console.log(`[langfuse] ${configured ? `enabled v5 (${env.LANGFUSE_HOST})` : "disabled — keys missing"}`);
+
+function noOpTrace(): LFTrace {
   return {
+    traceId: crypto.randomUUID(),
+    span: () => ({ end: () => {} }),
+    generation: () => {},
+    update: () => {},
+  };
+}
+
+/** Adapter kept exported so hierarchy/attribute behavior can be verified in-memory. */
+export function createTraceAdapter(root: LangfuseSpan): LFTrace {
+  return {
+    traceId: root.traceId,
     span: (name) => {
-      const s = t.span({ name });
-      return { end: (output) => s.end({ output }) };
+      const span = root.startObservation(name);
+      return {
+        end: (output) => {
+          span.update({ output });
+          span.end();
+        },
+      };
     },
     generation: ({ name, model, version, input, output, latencyMs, usage, metadata }) => {
-      const startTime = new Date(Date.now() - latencyMs);
-      const g = t.generation({
+      const generation = startObservation(
         name,
-        model,
-        version,
-        input,
-        output,
-        startTime,
-        metadata,
-        usage: {
-          input: usage.input,
-          output: usage.output,
-          total: usage.total,
-          totalCost: usage.totalCost,
-          unit: "TOKENS",
+        {
+          model,
+          version,
+          input,
+          metadata,
+          usageDetails: {
+            input: usage.input,
+            output: usage.output,
+            total: usage.total,
+          },
+          costDetails: { total: usage.totalCost },
         },
-      });
-      g.end(); // end() stamps endTime = now automatically
+        {
+          asType: "generation",
+          startTime: new Date(Date.now() - latencyMs),
+          parentSpanContext: root.otelSpan.spanContext(),
+        },
+      );
+      generation.update({ output });
+      generation.end();
     },
-    update: (opts) => {
-      t.update(opts);
+    update: ({ output, metadata, tags }) => {
+      // Root observation I/O replaces deprecated trace-level I/O. The stable
+      // channel tag is propagated before child creation; late-bound category/type
+      // tags are also stamped on the root's trace attributes to retain UI filters.
+      if (tags) {
+        root.otelSpan.setAttribute(LangfuseOtelSpanAttributes.TRACE_TAGS, JSON.stringify(tags));
+      }
+      root.update({ output, metadata: tags ? { ...metadata, tags } : metadata });
     },
   };
 }
 
-/** Attach a score to an existing trace by id (e.g. 👍/👎 feedback). */
-export async function scoreTrace(traceId: string, name: string, value: number): Promise<void> {
-  if (!_lf) return;
-  _lf.score({ traceId, name, value, dataType: "NUMERIC" });
-  await flushObs();
+/**
+ * Run one complete BOB turn inside a root observation. Correlating attributes are
+ * established before any child is created, and the root is ended before flushing.
+ */
+export async function runWithTrace<T>(start: LFTraceStart, fn: (trace: LFTrace) => Promise<T>): Promise<T> {
+  if (!spanProcessor) return fn(noOpTrace());
+
+  try {
+    return await propagateAttributes(
+      {
+        traceName: "bob-chat",
+        userId: start.userId,
+        sessionId: start.sessionId,
+        tags: start.channel ? [start.channel] : undefined,
+        metadata: start.channel ? { channel: start.channel } : undefined,
+      },
+      () =>
+        startActiveObservation("bob-chat", async (root) => {
+          root.update({ input: start.input });
+          return fn(createTraceAdapter(root));
+        }),
+    );
+  } finally {
+    await flushObs();
+  }
 }
 
-/** Send all queued events. Must be awaited before a serverless handler returns. */
+/** Attach a score to an existing trace by id (e.g. 👍/👎 feedback). */
+export async function scoreTrace(traceId: string, name: string, value: number): Promise<void> {
+  if (!client) return;
+  client.score.create({ traceId, name, value });
+  await client.score.flush();
+}
+
+/** Send every ended observation before a serverless handler returns. */
 export async function flushObs(): Promise<void> {
-  if (!_lf) return;
+  if (!spanProcessor) return;
   try {
-    await _lf.flushAsync();
+    await spanProcessor.forceFlush();
   } catch (err) {
     console.error("[langfuse] flush failed:", err);
   }

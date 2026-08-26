@@ -17,8 +17,8 @@ import {
 import { RedisJobStore } from "../../src/analytics/jobStoreRedis.js";
 import { insightEnabled, verifyQStash, enqueueStage } from "../../src/analytics/queue.js";
 import {
-  fetchTracesPage, normalizeAll, aggregate,
-  type NormalizedTurn, type RawTrace,
+  fetchObservationsPage, observationsToTraces, normalizeAll, aggregate,
+  type NormalizedTurn, type RawObservation,
 } from "../../src/analytics/langfuse.js";
 import { redact } from "../../src/analytics/redact.js";
 import { getDirectoryNames } from "../../src/people/directory.js";
@@ -32,11 +32,19 @@ export const config = { maxDuration: 60 };
 interface StageState {
   turns: NormalizedTurn[];
   samples: Array<{ intent: string; text: string }>; // redacted candidate questions
+  costByTraceId: Record<string, number>;
+  seenObservationIds: string[];
 }
 
 async function loadState(ref: string): Promise<StageState> {
   const r = getRedis();
-  return (r && (await r.get<StageState>(ref))) || { turns: [], samples: [] };
+  const saved = r && (await r.get<Partial<StageState>>(ref));
+  return {
+    turns: saved?.turns ?? [],
+    samples: saved?.samples ?? [],
+    costByTraceId: saved?.costByTraceId ?? {},
+    seenObservationIds: saved?.seenObservationIds ?? [],
+  };
 }
 async function saveState(ref: string, s: StageState): Promise<void> {
   const r = getRedis();
@@ -87,12 +95,15 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
   if (stage === "fetch") {
     const state = await loadState(job.stateRef);
     const names = await getDirectoryNames(); // for masking employee names in samples
-    let cursor: FetchCursor = job.cursor ?? { page: 1, totalPages: null, fetched: 0 };
+    let cursor: FetchCursor = job.cursor ?? { page: 1, apiCursor: null, fetched: 0 };
     for (;;) {
-      const pg = await fetchTracesPage(creds, fetchWindow, cursor.page);
-      state.turns.push(...normalizeAll(pg.data));
-      collectSamples(pg.data, state, names); // redacted candidates only
-      const decision = nextFetchStep(cursor, { page: cursor.page, totalPages: pg.totalPages, count: pg.data.length }, deadline);
+      const pg = await fetchObservationsPage(creds, fetchWindow, cursor.apiCursor);
+      mergeObservationPage(pg.data, state, names);
+      const decision = nextFetchStep(
+        cursor,
+        { page: cursor.page, nextCursor: pg.nextCursor, count: pg.data.length },
+        deadline,
+      );
       cursor = decision.cursor;
       await saveState(job.stateRef, state);
       await store.update(job.jobId, { cursor, status: "running" });
@@ -165,15 +176,42 @@ async function runStage(job: JobRecord, stage: string, store: RedisJobStore, dea
   }
 }
 
-/** Add redacted candidate questions (UNKNOWN / truncated turns) for the appendix.
- *  Structured PII (email/phone/id/token) + known employee names are both masked. */
-function collectSamples(raws: RawTrace[], state: StageState, names: string[]): void {
-  if (state.samples.length >= 20) return;
-  for (const t of normalizeAll(raws)) {
-    if (state.samples.length >= 20) break;
-    if (t.intent === "UNKNOWN" || t.truncated) {
-      const raw = raws.find((r) => r.id === t.id);
-      if (raw) state.samples.push({ intent: t.intent, text: redact(raw.input, { names }).text });
+/**
+ * Incrementally reconstruct turns from cursor-paginated observations. Child cost
+ * rows can cross page boundaries, so cost is accumulated by trace id and patched
+ * into the normalized root. Raw input is redacted immediately, never checkpointed.
+ */
+function mergeObservationPage(observations: RawObservation[], state: StageState, names: string[]): void {
+  const seen = new Set(state.seenObservationIds);
+  for (const observation of observations) {
+    if (seen.has(observation.id)) continue;
+    seen.add(observation.id);
+    if (!observation.traceId) continue;
+
+    const cost =
+      typeof observation.totalCost === "number"
+        ? observation.totalCost
+        : typeof observation.costDetails?.total === "number"
+          ? observation.costDetails.total
+          : 0;
+    state.costByTraceId[observation.traceId] = (state.costByTraceId[observation.traceId] ?? 0) + cost;
+
+    const existing = state.turns.find((t) => t.id === observation.traceId);
+    if (existing) existing.costUsd = state.costByTraceId[observation.traceId]!;
+
+    if (observation.isRootObservation !== true && observation.parentObservationId != null) continue;
+    const raw = observationsToTraces([observation])[0];
+    const turn = raw && normalizeAll([raw])[0];
+    if (!raw || !turn) continue;
+    turn.costUsd = state.costByTraceId[observation.traceId]!;
+
+    const at = state.turns.findIndex((t) => t.id === turn.id);
+    if (at >= 0) state.turns[at] = turn;
+    else state.turns.push(turn);
+
+    if (state.samples.length < 20 && (turn.intent === "UNKNOWN" || turn.truncated)) {
+      state.samples.push({ intent: turn.intent, text: redact(raw.input, { names }).text });
     }
   }
+  state.seenObservationIds = [...seen];
 }

@@ -121,6 +121,9 @@ MS Teams ⇄ Azure Bot F0 ($0, Single-Tenant) ⇄ Vercel /api/teams
 - Langfuse tracing ครบ: input/output, cost จริง (OpenRouter), model, user=email,
   prompt version, sessions, tags, router-as-generation, cache ROI, feedback 👍/👎 score
 - prompts migrate เข้า Langfuse (label `production`) + fallback files sync กัน
+- **Langfuse v4 readiness (2026-08-27):** codebase ย้ายจาก legacy JS SDK v3 ไป `@langfuse/*` v5 +
+  OpenTelemetry และเปลี่ยน analytics เป็น `/api/public/v2/observations` แล้ว; project ไม่มี evaluator
+  ที่ตั้งค่าไว้ แต่ยังรอ deploy/non-production ingestion verification และตรวจ data exports ก่อนกด project cutover.
 
 ### Phase 4 — Hardening
 - `fetchRetry` (per-attempt timeout + budget-aware retry, ไม่ retry ตอน timeout)
@@ -358,11 +361,11 @@ npx tsx scripts/run-eval.mjs --baseline test-results/eval-baseline.jsonl
 
 ### วิเคราะห์ usage / perf / cost
 ```bash
-node scripts/analyze-langfuse.mjs [days] [--raw]   # latency p50/p95, cost, token, cache hit
-node scripts/analyze-usage.mjs                      # usage ราย user/วัน/หมวด
+npx tsx scripts/analyze-langfuse.mjs [days] [--raw]   # latency p50/p95, cost, token, cache hit
+npx tsx scripts/analyze-usage.mjs                      # usage ราย user/วัน/หมวด
 ```
 ⚠️ Langfuse public API ติด 429 ง่าย — ต้องมี backoff + checkpoint, อย่ารัน 2 script พร้อมกัน.
-field: `latency` เป็น **วินาที** (×1000), cost = `calculatedTotalCost`.
+ field: `latency` เป็น **วินาที** (×1000), cost = `totalCost` หรือ `costDetails.total`.
 
 ### Tunables
 `src/kb/select.ts`: `BUDGET_CHARS` 18000, `MIN_DOCS` 6 (ลด budget = ประหยัดถ้า eval ยังผ่าน).

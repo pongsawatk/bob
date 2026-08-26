@@ -9,7 +9,6 @@ import {
   Deadline,
   nextFetchStep,
   InMemoryJobStore,
-  type FetchCursor,
 } from "../src/analytics/job.ts";
 
 const ms = (iso: string) => Date.parse(iso);
@@ -57,25 +56,42 @@ test("Deadline: yields only when the margin is reached", () => {
 // ── Resumable fetch decision ───────────────────────────────────────────
 test("nextFetchStep: continue when pages remain and budget is fine", () => {
   const d = new Deadline(45_000, 1_000_000);
-  const r = nextFetchStep({ page: 2, totalPages: 4, fetched: 100 }, { page: 2, totalPages: 4, count: 100 }, d, 1_010_000);
+  const r = nextFetchStep(
+    { page: 2, apiCursor: "cursor-2", fetched: 100 },
+    { page: 2, nextCursor: "cursor-3", count: 100 },
+    d,
+    1_010_000,
+  );
   assert.equal(r.action, "continue");
   assert.equal(r.cursor.page, 3);
+  assert.equal(r.cursor.apiCursor, "cursor-3");
   assert.equal(r.cursor.fetched, 200);
 });
 
 test("nextFetchStep: yield when pages remain but budget is spent", () => {
   const d = new Deadline(45_000, 1_000_000);
-  const r = nextFetchStep({ page: 2, totalPages: 4, fetched: 100 }, { page: 2, totalPages: 4, count: 100 }, d, 1_041_000);
+  const r = nextFetchStep(
+    { page: 2, apiCursor: "cursor-2", fetched: 100 },
+    { page: 2, nextCursor: "cursor-3", count: 100 },
+    d,
+    1_041_000,
+  );
   assert.equal(r.action, "yield");
   assert.equal(r.cursor.page, 3); // resume here next invocation
 });
 
 test("nextFetchStep: advance on the last page (or an empty page)", () => {
   const d = new Deadline(45_000, 1_000_000);
-  const last = nextFetchStep({ page: 3, totalPages: 4, fetched: 300 }, { page: 4, totalPages: 4, count: 50 }, d, 1_010_000);
+  const last = nextFetchStep(
+    { page: 4, apiCursor: "cursor-4", fetched: 300 },
+    { page: 4, nextCursor: null, count: 50 },
+    d,
+    1_010_000,
+  );
   assert.equal(last.action, "advance");
   assert.equal(last.cursor.fetched, 350);
-  const empty = nextFetchStep(null, { page: 1, totalPages: 9, count: 0 }, d, 1_010_000);
+  assert.equal(last.cursor.apiCursor, null);
+  const empty = nextFetchStep(null, { page: 1, nextCursor: "unused", count: 0 }, d, 1_010_000);
   assert.equal(empty.action, "advance");
 });
 

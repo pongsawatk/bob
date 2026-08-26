@@ -52,7 +52,7 @@ await run("OpenRouter", ["OPENROUTER_API_KEY"], async () => {
 
 // ── Langfuse ────────────────────────────────────────────────
 await run("Langfuse", ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"], async () => {
-  const host = process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
+  const host = process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com";
   const auth = Buffer.from(
     `${process.env.LANGFUSE_PUBLIC_KEY}:${process.env.LANGFUSE_SECRET_KEY}`
   ).toString("base64");

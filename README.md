@@ -71,7 +71,7 @@ bob-sidekick/
 
 ### Prerequisites
 - Node.js 20+
-- `.env` with: `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_HOST`,
+- `.env` with: `OPENROUTER_API_KEY`, `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL`,
   `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, `OUTLINE_API_TOKEN`/`OUTLINE_BASE_URL`/`OUTLINE_COLLECTION_IDS`,
   `AZURE_BOT_ID`/`AZURE_BOT_SECRET`/`AZURE_TENANT_ID`, `KB_ADMIN_EMAILS` (see `.env.example`)
 
@@ -80,7 +80,7 @@ bob-sidekick/
 npm run check                 # connectivity check for all services
 npm run refresh-kb            # sync Outline → Redis knowledge bundles
 npx tsx scripts/run-eval.mjs --baseline test-results/eval-baseline.jsonl   # regression eval
-node scripts/analyze-langfuse.mjs [days]   # latency / cost / token / cache analysis
+npx tsx scripts/analyze-langfuse.mjs [days]   # latency / cost / token / cache analysis
 ```
 
 ### Deploy

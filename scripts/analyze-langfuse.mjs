@@ -1,5 +1,5 @@
 // Pull GENERATION observations from Langfuse and summarize latency + cost.
-// Usage: node scripts/analyze-langfuse.mjs [days=7] [--raw]
+// Usage: npx tsx scripts/analyze-langfuse.mjs [days=7] [--raw]
 import { loadEnv } from "./_load-env.mjs";
 loadEnv();
 
@@ -8,39 +8,21 @@ const RAW = process.argv.includes("--raw");
 
 const PUB = process.env.LANGFUSE_PUBLIC_KEY;
 const SEC = process.env.LANGFUSE_SECRET_KEY;
-const HOST = (process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
+const HOST = (process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
 if (!PUB || !SEC) {
   console.error("Missing LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY");
   process.exit(1);
 }
-const AUTH = "Basic " + Buffer.from(`${PUB}:${SEC}`).toString("base64");
 const fromStartTime = new Date(Date.now() - DAYS * 864e5).toISOString();
-
-async function fetchPage(page) {
-  const url =
-    `${HOST}/api/public/observations?type=GENERATION&limit=100&page=${page}` +
-    `&fromStartTime=${encodeURIComponent(fromStartTime)}`;
-  for (let attempt = 1; ; attempt++) {
-    const res = await fetch(url, { headers: { Authorization: AUTH } });
-    if (res.ok) return res.json();
-    if (res.status >= 500 && attempt < 4) {
-      await new Promise((r) => setTimeout(r, 1500 * attempt));
-      continue;
-    }
-    throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-  }
-}
-
-const all = [];
-for (let page = 1; ; page++) {
-  const body = await fetchPage(page);
-  const data = body.data || [];
-  all.push(...data);
-  const totalPages = body.meta?.totalPages ?? 1;
-  process.stderr.write(`\rfetched page ${page}/${totalPages} (${all.length} obs)`);
-  if (page >= totalPages || data.length === 0) break;
-}
-process.stderr.write("\n");
+const { fetchObservations } = await import("../src/analytics/langfuse.ts");
+const all = await fetchObservations(
+  { host: HOST, publicKey: PUB, secretKey: SEC },
+  { fromMs: Date.parse(fromStartTime), toMs: Date.now() },
+  {
+    type: "GENERATION",
+    fields: "core,basic,metadata,model,usage,metrics,trace_context",
+  },
+);
 
 if (RAW && all[0]) {
   console.log("SAMPLE OBSERVATION:\n", JSON.stringify(all[0], null, 2));
@@ -49,9 +31,9 @@ if (RAW && all[0]) {
 const num = (x) => (typeof x === "number" && isFinite(x) ? x : 0);
 const latencyOf = (o) =>
   o.latency != null ? o.latency * 1000 : new Date(o.endTime) - new Date(o.startTime); // Langfuse latency is in seconds
-const costOf = (o) => num(o.calculatedTotalCost ?? o.totalCost ?? o.costDetails?.total);
-const inTok = (o) => num(o.usage?.input ?? o.usage?.promptTokens ?? o.usageDetails?.input);
-const outTok = (o) => num(o.usage?.output ?? o.usage?.completionTokens ?? o.usageDetails?.output);
+const costOf = (o) => num(o.totalCost ?? o.costDetails?.total);
+const inTok = (o) => num(o.usageDetails?.input);
+const outTok = (o) => num(o.usageDetails?.output);
 const cacheTok = (o) => num(o.metadata?.cacheReadTokens);
 
 function pct(arr, p) {
@@ -77,7 +59,7 @@ const rows = [];
 for (const [name, obs] of groups) {
   const lats = obs.map(latencyOf);
   const costs = obs.map(costOf);
-  const model = [...new Set(obs.map((o) => o.model))].join(",");
+  const model = [...new Set(obs.map((o) => o.providedModelName).filter(Boolean))].join(",");
   const llm = obs.filter((o) => cacheTok(o) > 0 || inTok(o) > 0); // calls that actually hit LLM
   const cacheHits = obs.filter((o) => cacheTok(o) > 0).length;
   rows.push({

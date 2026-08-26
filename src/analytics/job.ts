@@ -23,9 +23,9 @@ export type WindowDays = 7 | 14 | 30;
 export const DEFAULT_WORKER_BUDGET_MS = 45_000;
 
 export interface FetchCursor {
-  page: number; // next page to fetch (1-based)
-  totalPages: number | null;
-  fetched: number; // raw traces fetched so far
+  page: number; // next cursor page ordinal (1-based; used for job dedup tags)
+  apiCursor: string | null; // opaque v2 observations cursor
+  fetched: number; // raw observations fetched so far
 }
 
 export interface JobRecord {
@@ -125,7 +125,7 @@ export class Deadline {
 
 export interface PageResult {
   page: number; // page just fetched (1-based)
-  totalPages: number;
+  nextCursor: string | null;
   count: number; // rows returned for this page
 }
 
@@ -142,11 +142,11 @@ export function nextFetchStep(
   now: number = Date.now()
 ): FetchDecision {
   const fetched = (prev?.fetched ?? 0) + page.count;
-  const done = page.page >= page.totalPages || page.count === 0;
+  const done = !page.nextCursor || page.count === 0;
   if (done) {
-    return { action: "advance", cursor: { page: page.page, totalPages: page.totalPages, fetched } };
+    return { action: "advance", cursor: { page: page.page, apiCursor: null, fetched } };
   }
-  const cursor: FetchCursor = { page: page.page + 1, totalPages: page.totalPages, fetched };
+  const cursor: FetchCursor = { page: page.page + 1, apiCursor: page.nextCursor, fetched };
   return deadline.shouldYield(5000, now) ? { action: "yield", cursor } : { action: "continue", cursor };
 }
 

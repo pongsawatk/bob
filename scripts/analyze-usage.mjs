@@ -1,5 +1,5 @@
 // Usage summary from Langfuse traces: volume, users, categories, daily trend.
-// Usage: node scripts/analyze-usage.mjs [days=30] [--raw]
+// Usage: npx tsx scripts/analyze-usage.mjs [days=30] [--raw]
 import { loadEnv } from "./_load-env.mjs";
 loadEnv();
 
@@ -8,39 +8,17 @@ const RAW = process.argv.includes("--raw");
 
 const PUB = process.env.LANGFUSE_PUBLIC_KEY;
 const SEC = process.env.LANGFUSE_SECRET_KEY;
-const HOST = (process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
+const HOST = (process.env.LANGFUSE_BASE_URL || process.env.LANGFUSE_HOST || "https://cloud.langfuse.com").replace(/\/$/, "");
 if (!PUB || !SEC) {
   console.error("Missing LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY");
   process.exit(1);
 }
-const AUTH = "Basic " + Buffer.from(`${PUB}:${SEC}`).toString("base64");
 const fromTimestamp = new Date(Date.now() - DAYS * 864e5).toISOString();
-
-async function fetchPage(page) {
-  const url =
-    `${HOST}/api/public/traces?limit=100&page=${page}` +
-    `&fromTimestamp=${encodeURIComponent(fromTimestamp)}`;
-  for (let attempt = 1; ; attempt++) {
-    const res = await fetch(url, { headers: { Authorization: AUTH } });
-    if (res.ok) return res.json();
-    if (res.status >= 500 && attempt < 4) {
-      await new Promise((r) => setTimeout(r, 1500 * attempt));
-      continue;
-    }
-    throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-  }
-}
-
-const all = [];
-for (let page = 1; ; page++) {
-  const body = await fetchPage(page);
-  const data = body.data || [];
-  all.push(...data);
-  const totalPages = body.meta?.totalPages ?? 1;
-  process.stderr.write(`\rfetched page ${page}/${totalPages} (${all.length} traces)`);
-  if (page >= totalPages || data.length === 0) break;
-}
-process.stderr.write("\n");
+const { fetchTraces } = await import("../src/analytics/langfuse.ts");
+const all = await fetchTraces(
+  { host: HOST, publicKey: PUB, secretKey: SEC },
+  { fromMs: Date.parse(fromTimestamp), toMs: Date.now() },
+);
 
 if (RAW && all[0]) console.log("SAMPLE TRACE:\n", JSON.stringify(all[0], null, 2));
 
