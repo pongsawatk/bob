@@ -9,6 +9,7 @@
 //
 // Scoring is character n-gram overlap (no Thai word segmentation needed).
 
+import { canonicalQuery, retrievalQuery, queryConcepts, type QueryTurn } from './query.js';
 const SEP = "\n\n---\n\n";
 
 // Tunables. Conservative on the first cut — prove quality holds (via run-eval),
@@ -23,7 +24,7 @@ const TITLE_WEIGHT = 3; // a hit in the title counts more than in the body
 const BROAD = /อะไร\S{0,6}บ้าง|มีอะไร|ได้บ้าง|บ้างไหม|กี่ประเภท|ประเภท(ไหน|ใด|อะไร)|ทั้งหมด|ทุกอย่าง|ทุกประเภท|สรุป(ให้|มา|ทั้ง)?|รายการ|list|overview|ภาพรวม/i;
 
 function norm(s: string): string {
-  return s.toLowerCase().replace(/[^฀-๿a-z0-9]/g, "");
+  return canonicalQuery(s).replace(/[^฀-๿a-z0-9]/g, "");
 }
 
 function ngrams(s: string, n = 3): Set<string> {
@@ -46,30 +47,37 @@ export interface SelectResult {
   chars: number;
   fullChars: number;
   mode: "full" | "broad" | "retrieved";
+  sources?: Array<{ title: string; url?: string }>;
+  contextUsed?: boolean;
 }
 
 /** Pick the question-relevant subset of an assembled KB bundle (split on SEP). */
-export function selectDocs(question: string, fullBundle: string): SelectResult {
+export function selectDocs(question: string, fullBundle: string, history: readonly QueryTurn[] = []): SelectResult {
   const blocks = fullBundle.split(SEP).filter(Boolean);
   const fullChars = fullBundle.length;
-  const base = { total: blocks.length, fullChars };
+  const query = retrievalQuery(question, history);
+  const sources = (bs: string[]) => bs.map(b => ({ title: b.split('\n')[0]!.replace(/^##\s*/, ''), url: /แหล่งอ้างอิง:\s*(https?:\/\/\S+)/.exec(b)?.[1] }));
+  const base = { total: blocks.length, fullChars, contextUsed: query !== canonicalQuery(question) };
 
   // Already small, or a broad/list question → use everything.
   if (fullChars <= BUDGET_CHARS)
-    return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "full", ...base };
+    return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "full", sources: sources(blocks), ...base };
   if (BROAD.test(question))
-    return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "broad", ...base };
+    return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "broad", sources: sources(blocks), ...base };
 
-  const qg = ngrams(question);
+  const qg = ngrams(query);
+  const concepts = queryConcepts(query);
   const scored = blocks.map((b, i) => {
     const titleLine = b.split("\n", 1)[0] || "";
-    const score = overlap(qg, ngrams(b)) + TITLE_WEIGHT * overlap(qg, ngrams(titleLine));
+    // Explicit topic in a title outranks generic shared words such as สวัสดิการ.
+    const topicHits = queryConcepts(titleLine).filter(c => concepts.includes(c)).length;
+    const score = 1000 * topicHits + overlap(qg, ngrams(b)) + TITLE_WEIGHT * overlap(qg, ngrams(titleLine));
     return { b, i, score };
   });
 
   // No lexical signal at all → don't guess, send the full bundle (safe).
   if (scored.every((s) => s.score === 0))
-    return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "full", ...base };
+    return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "full", sources: sources(blocks), ...base };
 
   // Highest score first (stable tie-break by original order).
   scored.sort((a, b) => b.score - a.score || a.i - b.i);
@@ -88,6 +96,7 @@ export function selectDocs(question: string, fullBundle: string): SelectResult {
     selected: picked.length,
     chars,
     mode: "retrieved",
+    sources: sources(picked.map(p => p.b)),
     ...base,
   };
 }

@@ -6,6 +6,11 @@ import type { LLMMessage } from "../llm/openrouter.js";
 import { handlePeopleQuery, defaultPeopleDeps } from "../people/connector.js";
 import type { RequesterIdentity } from "../people/identity.js";
 import { peopleEnabled } from "../channels/people.js";
+import { decideRoute } from './routePolicy.js';
+import { SYSTEM_POLICY_VERSION } from '../prompts/systemPolicy.js';
+import { domainOutcome, peopleOutcome } from './outcome.js';
+import { withBudget, BudgetExceededError, requestBudget } from '../http/budget.js';
+import { deliverAnswer } from './delivery.js';
 
 export type { LLMMessage };
 
@@ -30,9 +35,12 @@ export interface PipelineInput {
    * questions ("หัวหน้าฉันคือใคร") on this.
    */
   requester?: RequesterIdentity;
+  /** Absolute deadline shared with Teams preparation; default 45s from entry. */
+  deadlineMs?: number;
 }
 
 export interface PipelineOutput {
+  errorStage?: 'TIMEOUT' | 'PIPELINE';
   traceId: string;
   category: Category;
   answer: string;
@@ -51,21 +59,51 @@ export interface PipelineOutput {
 // warm latency when profiling the pipeline overhead.
 let instanceWarmed = false;
 
-export async function runPipeline(input: PipelineInput): Promise<PipelineOutput> {
+export async function runPipeline(input: PipelineInput, deliver?: (output: PipelineOutput) => Promise<unknown>): Promise<PipelineOutput> {
   const { message, userId, channel = "teams", sessionId } = input;
-  return runWithTrace({ userId, sessionId, channel, input: message }, (trace) =>
-    runPipelineTraced(input, trace),
-  );
+  return runWithTrace({ userId, sessionId, channel, input: message }, async (trace) => {
+    const output = await runBoundedPipeline(input, trace);
+    if (deliver) await deliverAnswer(trace, () => deliver(output));
+    return output;
+  });
 }
 
-async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<PipelineOutput> {
+export async function runBoundedPipeline(input: PipelineInput, trace: LFTrace, deps = { route: routeMessage, domain: callDomainBot }): Promise<PipelineOutput> {
+  const start = Date.now();
+  let active = true;
+  const pending = new Set<ReturnType<LFTrace['span']>>();
+  const guarded: LFTrace = {
+    traceId: trace.traceId,
+    update: o => { if (active) trace.update(o); },
+    generation: g => { if (active) trace.generation(g); },
+    span: name => {
+      const s = active ? trace.span(name) : undefined;
+      if (s) pending.add(s);
+      return { end: o => { if (active && s) { s.end(o); pending.delete(s); } } };
+    },
+  };
+  try {
+    return await withBudget((input.deadlineMs ?? start + 45_000) - start, () => runPipelineTraced(input, guarded, deps));
+  } catch (err) {
+    const errorStage = err instanceof BudgetExceededError || (err instanceof Error && err.name === 'AbortError') ? 'TIMEOUT' : 'PIPELINE';
+    const answer = errorStage === 'TIMEOUT' ? 'ขออภัยครับ ระบบใช้เวลาตอบนานเกินไป กรุณาลองใหม่อีกครั้งครับ' : 'ขออภัยครับ ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้งครับ';
+    trace.update({ output: answer, metadata: { channel: input.channel ?? 'teams', category: 'GENERAL', answerStatus: 'failed', outcomeSource: 'deterministic', errorStage, latencyMs: Date.now() - start, systemPolicyVersion: SYSTEM_POLICY_VERSION }, tags: [input.channel ?? 'teams', 'failed'] });
+    console.error(`[pipeline] ${errorStage}`);
+    return { traceId: trace.traceId, category: 'GENERAL', answer, errorStage, latencyMs: Date.now() - start, fromCache: false, usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 } };
+  } finally {
+    active = false;
+    for (const span of pending) span.end({ status: 'cancelled_or_failed' });
+  }
+}
+
+export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, deps = { route: routeMessage, domain: callDomainBot }): Promise<PipelineOutput> {
   const { message, userId, userName = "คุณ", department = "", channel = "teams", sessionId, history = [], profileBlock, requester } = input;
   const traceId = trace.traceId;
   const t0 = Date.now();
   const coldStart = !instanceWarmed;
   instanceWarmed = true;
 
-  const baseMeta = { channel, department, userName };
+  const baseMeta = { channel, department, userName, systemPolicyVersion: SYSTEM_POLICY_VERSION };
 
   // ── Tier 0: Pre-cache ──────────────────────────────────────────
   const precacheSpan = trace.span("precache");
@@ -75,7 +113,7 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
   if (precacheHit) {
     trace.update({
       output: precacheHit.answer,
-      metadata: { ...baseMeta, category: precacheHit.category, fromCache: true, coldStart },
+      metadata: { ...baseMeta, category: precacheHit.category, fromCache: true, coldStart, latencyMs: Math.max(1, Date.now() - t0), answerStatus: 'answered' },
       tags: [channel, precacheHit.category, "precache"],
     });
     return {
@@ -91,7 +129,8 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
   // ── Tier 1: Router ─────────────────────────────────────────────
   const routeSpan = trace.span("route");
   const tRoute = Date.now();
-  const routed = await routeMessage(message, history);
+  const routed = await deps.route(message, history);
+  requestBudget()?.signal.throwIfAborted();
   const routeMs = Date.now() - tRoute;
   routeSpan.end({ category: routed.category, promptMs: routed.promptMs, llmMs: routed.latencyMs });
   trace.generation({
@@ -109,6 +148,15 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
     },
     metadata: { confidence: routed.confidence },
   });
+
+  const decision = decideRoute(routed, message, history);
+  Object.assign(baseMeta, { originalCategory: routed.category, routeReason: decision.reason });
+  routed.category = decision.category;
+  if (decision.clarification) {
+    const latencyMs = Math.max(1, Date.now() - t0);
+    trace.update({ output: decision.clarification, metadata: { ...baseMeta, category: routed.category, latencyMs, answerStatus: 'clarification', outcomeSource: 'deterministic' }, tags: [channel, routed.category, 'clarification'] });
+    return { traceId, category: routed.category, answer: decision.clarification, latencyMs, fromCache: false, usage: { inputTokens: routed.usage.inputTokens, outputTokens: routed.usage.outputTokens, cacheReadTokens: 0 } };
+  }
 
   // ── People Connector ───────────────────────────────────────────
   // Person/team/reporting lookups over the For-All directory. Enabled for
@@ -140,6 +188,7 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
       metadata: {
         ...baseMeta,
         category: "PEOPLE",
+        ...peopleOutcome(res),
         subIntent: res.subIntent,
         policyOutcome: res.outcome,
         resultCount: res.resultCount,
@@ -173,7 +222,8 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
   // ── Tier 2-4: Domain Bot ───────────────────────────────────────
   const domainSpan = trace.span("domain");
   const tDomain = Date.now();
-  const botResult = await callDomainBot(routed.category, message, userName, department, history, profileBlock);
+  const botResult = await deps.domain(routed.category, message, userName, department, history, profileBlock);
+  requestBudget()?.signal.throwIfAborted();
   const domainMs = Date.now() - tDomain;
   domainSpan.end({
     category: routed.category,
@@ -181,7 +231,7 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
     kbMs: botResult.kbMs,
     llmMs: botResult.latencyMs,
   });
-  trace.generation({
+  if (botResult.model) trace.generation({
     name: `domain:${routed.category}`,
     model: botResult.model,
     version: botResult.promptVersion,
@@ -194,7 +244,7 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
       total: botResult.usage.inputTokens + botResult.usage.outputTokens,
       totalCost: botResult.costUsd,
     },
-    metadata: { cacheReadTokens: botResult.usage.cacheReadTokens, kbSelect: botResult.kbSelect },
+    metadata: { cacheReadTokens: botResult.usage.cacheReadTokens, kbSelect: botResult.kbSelect, systemPolicyVersion: SYSTEM_POLICY_VERSION },
   });
 
   const totalMs = Date.now() - t0;
@@ -220,6 +270,9 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
       ...baseMeta,
       category: routed.category,
       confidence: routed.confidence,
+      ...domainOutcome(botResult.text, routed.category),
+      ...(botResult.evidenceGap ? { answerStatus: 'partial', outcomeSource: 'deterministic', evidenceGap: botResult.evidenceGap, reviewRequired: true } : {}),
+      eligibilityGuarded: botResult.eligibilityGuarded ?? false,
       // Flag only — never the profile content (keeps PII out of Langfuse).
       hasProfile: !!profileBlock,
       latencyMs: totalMs,
@@ -231,6 +284,8 @@ async function runPipelineTraced(input: PipelineInput, trace: LFTrace): Promise<
         docs: `${botResult.kbSelect.selected}/${botResult.kbSelect.total}`,
         chars: botResult.kbSelect.chars,
         fullChars: botResult.kbSelect.fullChars,
+        sources: botResult.kbSelect.sources,
+        contextUsed: botResult.kbSelect.contextUsed,
       },
       timings,
     },

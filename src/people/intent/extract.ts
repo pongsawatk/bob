@@ -157,6 +157,7 @@ function coerce(parsed: unknown): IntentResult | null {
     searchParams: normalizeSearchParams(o.searchParams),
     confidence: typeof o.confidence === "number" ? Math.max(0, Math.min(1, o.confidence)) : Number.NaN,
     ...(typeof o.countOnly === "boolean" ? { countOnly: o.countOnly } : {}),
+    ...(o.countGroups !== undefined ? { countGroups: o.countGroups as IntentResult['countGroups'] } : {}),
     ...(typeof o.targetType === "string" ? { targetType: o.targetType as TargetType } : {}),
   };
   return validateIntentResult(candidate).length === 0 ? candidate : null;

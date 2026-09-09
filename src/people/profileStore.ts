@@ -35,16 +35,40 @@ export function findByNickname(map: ProfileMap, nickname: string): Profile[] {
 /** Normalized substring match across Thai name, English name, and nickname.
  *  Requires >= 2 chars so a single letter can't enumerate the directory. */
 export function findByName(map: ProfileMap, query: string): Profile[] {
-  const n = norm(query);
-  if (n.length < 2) return [];
-  return Object.values(map)
+  const search = (n: string): Profile[] => {
+    if (n.length < 2) return [];
+    const exact = Object.values(map).filter(p => [p.email, p.fullNameTh, p.fullNameEn].some(v => norm(v) === n));
+    if (exact.length) return exact.sort(byName);
+    return Object.values(map)
     .filter(
       (p) =>
-        norm(p.fullNameTh).includes(n) ||
+        norm(p.email) === n || norm(p.fullNameTh).includes(n) ||
         (p.fullNameEn ? norm(p.fullNameEn).includes(n) : false) ||
         norm(p.nickname).includes(n),
     )
-    .sort(byName);
+      .sort(byName);
+  };
+  const n = norm(query);
+  const raw = search(n);
+  return raw.length ? raw : search(n.replace(/^(?:คุณ|พี่|น้อง)\s*/, ''));
+}
+
+/** Typo matches are suggestions only: never returned as confirmed identities. */
+export function suggestNames(map: ProfileMap, query: string): Profile[] {
+  const q = norm(query).replace(/^(?:คุณ|พี่|น้อง)\s*/, '');
+  if (q.length < 4 || q.includes('@')) return [];
+  const distance = (a: string, b: string): number => {
+    let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 0; i < a.length; i++) {
+      const next = [i + 1];
+      for (let j = 0; j < b.length; j++) next.push(Math.min(next[j]! + 1, row[j + 1]! + 1, row[j]! + (a[i] === b[j] ? 0 : 1)));
+      row = next;
+    }
+    return row[b.length]!;
+  };
+  const max = q.length >= 8 ? 2 : 1;
+  return Object.values(map).map(p => ({ p, d: Math.min(...[p.fullNameTh, p.fullNameEn, p.nickname, ...(p.fullNameEn || '').split(/\s+/)].filter(Boolean).map(n => distance(q, norm(n)))) }))
+    .filter(x => x.d <= max).sort((a, b) => a.d - b.d || byName(a.p, b.p)).slice(0, 3).map(x => x.p);
 }
 
 export type SupervisorResolution =

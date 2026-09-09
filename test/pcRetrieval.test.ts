@@ -48,12 +48,12 @@ test("PERSON_LOOKUP: nickname match ranks above name match", () => {
   assert.equal(r.results[1]?.reasonCode, "name_match");
 });
 
-test("PERSON_LOOKUP: caps at MAX_RESULTS_FIRST_PAGE (3) but reports true total", () => {
+test("PERSON_LOOKUP: duplicate nicknames ask for confirmation without disclosing profiles", () => {
   const r = retrieve({ intent: I("PERSON_LOOKUP", { personRef: "ก้อง" }), directory });
-  assert.equal(r.results.length, 3);
-  assert.equal(r.totalMatches, 4);
-  assert.equal(r.shownCount, 3);
-  assert.equal(r.truncated, true);
+  assert.equal(r.results.length, 0);
+  assert.equal(r.needsClarification, true);
+  assert.equal(r.clarificationKind, 'person');
+  assert.equal(r.clarifyOptions?.length, 4);
 });
 
 test("PERSON_LOOKUP: empty ref → suggestCorrection, no results", () => {

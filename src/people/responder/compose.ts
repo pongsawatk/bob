@@ -113,6 +113,7 @@ export interface ResponseContext {
   shownCount: number;
   truncated: boolean;
   countOnly: boolean;
+  countGroups?: Array<{ label: string; count: number | null; reason?: string }>;
   filtersApplied?: { team?: string; bu?: string; role?: string; topic?: string; personRef?: string };
 }
 
@@ -177,7 +178,10 @@ const ROLE_TH: Record<string, string> = {
  *  never from a model. */
 export function countTemplate(ctx: ResponseContext): string {
   const what = filterPhrase(ctx);
-  return `${what ? `${what} ` : ""}มีทั้งหมด ${ctx.totalMatches} คนครับ`;
+  const total = `${what ? `${what} ` : ""}มีทั้งหมด ${ctx.totalMatches} คนครับ`;
+  if (!ctx.countGroups?.length) return total;
+  const groups = ctx.countGroups.map(g => `- ${g.label}: ${g.count === null ? 'ยังระบุกลุ่มนี้ในทะเบียนไม่ได้ กรุณายืนยันชื่อทีม/ตำแหน่ง' : `${g.count} คน`}`);
+  return `${total}\n${groups.join('\n')}\n\nนับแต่ละกลุ่มภายในขอบเขตข้างต้น กลุ่มอาจซ้อนทับหรือไม่ครอบคลุมทั้งหมด จึงไม่ใช้ผลบวกแทนยอดรวมครับ`;
 }
 
 /** Deterministic roster answer. Discloses total vs shown whenever the page is

@@ -36,6 +36,7 @@ const server = http.createServer(async (req, res) => {
         }
         const output = await runPipeline({
           message,
+          channel: 'dev',
           userId: userId ?? "dev-user",
           userName: userName ?? "Dev",
           department: department ?? "",

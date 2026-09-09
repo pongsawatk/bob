@@ -10,6 +10,7 @@ import {
 } from "@langfuse/tracing";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { env } from "../env.js";
+import { withBudget } from '../http/budget.js';
 
 export interface LFSpan {
   end: (output: unknown) => void;
@@ -168,7 +169,7 @@ export async function scoreTrace(traceId: string, name: string, value: number): 
 export async function flushObs(): Promise<void> {
   if (!spanProcessor) return;
   try {
-    await spanProcessor.forceFlush();
+    await withBudget(3000, () => spanProcessor.forceFlush());
   } catch (err) {
     console.error("[langfuse] flush failed:", err);
   }

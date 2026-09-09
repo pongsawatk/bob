@@ -1,4 +1,12 @@
-# Metric Contract — v0.1 (DRAFT, WP-01)
+# Metric Contract — v0.2 (system implementation, 2026-09-09)
+
+v0.2 implementation addendum: core formulas below are unchanged. Traffic filters now exclude explicit `eval/dev/test/cli/smoke/qa/migration-smoke` channels or tags and `testTraffic=true`, including test traffic with employee-like emails. `/api/chat` writes `channel=test`; the local server writes `channel=dev`. Named sender exclusions are `eval`, `dev-user`, `test-user`, `cli`, `smoke`, `qa`, `migration-smoke`. Normal production AAD ids remain included. Unknown legacy channels remain included for backward compatibility; they cannot retrospectively be proven to be Teams traffic.
+
+Observations are deduplicated by observation id before summing costs. A child without a root is not a user turn. Invalid timestamps are excluded. The `delivery` child records `sent` (Teams accepted the send), `failed`, or `unknown` (timed out; no automatic resend). `sent` does not establish that the person read the message. Historical absence is `not_recorded`.
+
+`answerStatus` is an operational label: `answered`, `clarification`, `no_information`, `partial`, `refused`, `failed`, or historical `unknown`. `outcomeSource=deterministic|text_heuristic|router` distinguishes code decisions from heuristics. No label or thumbs-up alone establishes factual accuracy. A text-based missing-information signal creates a review candidate, not a confirmed KB defect.
+
+Snapshot schema v1 contains metrics, trace ids, HMAC user/session keys and operational labels only; no message bodies or raw identities. HMAC keys must remain stable across snapshots. Merge rejects mismatched key ids and deduplicates by trace id. Requested and observed windows are reported separately; export does not prove complete coverage or recover records already removed by retention.
 
 The single definition of every number the Continuous Improvement Analytics report emits.
 WP-10 must implement exactly this; if a definition is wrong, change it **here first** (bump the version), then the code. Numbers are only comparable across weeks if this contract is frozen.
@@ -23,7 +31,7 @@ Grounding legend: **[V]** verified in code that writes the field · **[A]** assu
 - **Exclude test/bot traffic** before any metric:
   - `userId ∈ {"eval","dev-user"}` (from `run-eval.mjs`, `index.ts` dev server). **[V]**
   - Any future CLI/smoke sender ids → maintain an explicit denylist constant.
-  - **DECIDE**: is `channel != "teams"` excluded from production metrics? (chat.ts test endpoint sets no channel → defaults `"teams"`; may pollute). **[A]**
+  - v0.2: exclude explicit test channels/tags as listed above. Unknown historic traffic is retained and must be reviewed separately. New test/dev endpoints stamp their channel. **[V]**
 - Include only traces with `name == "bob-chat"`. **[V]**
 
 ## 3. Core metrics (all computed in code, never by the LLM)

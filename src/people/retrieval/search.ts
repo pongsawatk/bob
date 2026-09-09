@@ -7,7 +7,7 @@
 // flip, not a code change).
 
 import type { Profile } from "../directory.js";
-import { findByName, findByNickname, findSupervisor, norm, tenure, type ProfileMap } from "../profileStore.js";
+import { findByName, findByNickname, findSupervisor, suggestNames, norm, tenure, type ProfileMap } from "../profileStore.js";
 import { PC_CONFIG } from "../pcConfig.js";
 import type { IntentResult, RelationshipType, SubIntent, WorkProfile } from "../pcTypes.js";
 import {
@@ -51,6 +51,8 @@ export interface RetrieveInput {
   /** the asker's own profile, when their identity resolved (WP-01). Required for
    *  targetType SELF; absent means we must not answer a self question at all. */
   requester?: Profile;
+  /** A requested subgroup is an actual team, not a position containing its name. */
+  teamFieldsOnly?: boolean;
 }
 
 /** The canonical filters retrieval actually applied — echoed back so the answer can
@@ -92,19 +94,21 @@ export interface SearchResponse {
   needsClarification?: boolean;
   /** the registry spellings to offer when needsClarification. */
   clarifyOptions?: string[];
+  clarificationKind?: 'person' | 'team';
+  countGroups?: Array<{ label: string; count: number | null; reason?: string }>;
 }
 
 /** Token-substring match of a free-text topic/team across Org/Sub Org/Group/
  *  Department/Function/Position. Strips a leading team/แผนก word; every token
  *  (>=2 chars) must appear. Sorted by name, capped. Shared by TEAM_ROSTER and the
  *  ownership inference path (HR: interpret ownership from Org/Sub Org). */
-export function matchByTopic(dir: ProfileMap, query: string, cap: number): Profile[] {
+export function matchByTopic(dir: ProfileMap, query: string, cap: number, includePosition = true): Profile[] {
   const stripped = norm(query).replace(/^(ทีม|แผนก|ฝ่าย|กลุ่ม|team|department|dept\.?)\s*/i, "").trim();
   const tokens = (stripped || norm(query)).split(/\s+/).filter((t) => t.length >= 2);
   if (tokens.length === 0) return [];
   return Object.values(dir)
     .filter((p) => {
-      const hay = [p.org, p.subOrg, p.group, p.department, p.team, p.position].map(norm).join(" | ");
+      const hay = [p.org, p.subOrg, p.group, p.department, p.team, ...(includePosition ? [p.position] : [])].map(norm).join(" | ");
       return tokens.every((t) => hay.includes(t));
     })
     .sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"))
@@ -273,7 +277,13 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       for (const p of findByName(directory, ref)) {
         if (!seen.has(p.email)) (seen.add(p.email), ordered.push(dir(p, "name_match", input)));
       }
-      if (ordered.length === 0) return empty({ fallback: true, suggestCorrection: true });
+      if (ordered.length === 0) {
+        const suggestions = suggestNames(directory, ref);
+        return empty({ fallback: true, suggestCorrection: true, needsClarification: suggestions.length > 0, clarificationKind: 'person', clarifyOptions: suggestions.map(p => p.fullNameTh) });
+      }
+      const nickHits = ordered.filter(r => r.reasonCode === 'nickname_match');
+      const ambiguous = nickHits.length ? nickHits : ordered;
+      if (ambiguous.length > 1) return empty({ needsClarification: true, clarificationKind: 'person', clarifyOptions: ambiguous.slice(0, 5).map(r => `${r.profile.displayName}${r.profile.subOrg ? ` — ${r.profile.subOrg}` : ''}`) });
       return page(ordered, {
         limit: input.limit ?? PC_CONFIG.MAX_RESULTS_FIRST_PAGE,
         countOnly,
@@ -314,7 +324,7 @@ export function retrieve(input: RetrieveInput): SearchResponse {
         ? Object.values(directory).sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"))
         : canonicalTeam
           ? matchByCanonicalTeam(directory, teamTerm)
-          : matchByTopic(directory, teamTerm, Number.MAX_SAFE_INTEGER);
+          : matchByTopic(directory, teamTerm, Number.MAX_SAFE_INTEGER, !input.teamFieldsOnly);
       if (norm(teamTerm)) filtersApplied.team = teamTerm;
 
       // AND, not OR: each filter narrows what the previous one left.
@@ -330,16 +340,27 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       }
 
       if (members.length === 0) return empty({ fallback: true, filtersApplied });
-      return page(members.map((p) => dir(p, "team_member", input)), {
+      const response = page(members.map((p) => dir(p, "team_member", input)), {
         limit: input.limit ?? PC_CONFIG.TEAM_ROSTER_MAX,
         countOnly,
         filtersApplied,
       });
+      if (countOnly && intent.countGroups?.length) {
+        const scoped = Object.fromEntries(members.map(p => [p.email, p]));
+        response.countGroups = intent.countGroups.map(g => {
+          const part = retrieve({ ...input, directory: scoped, teamFieldsOnly: true, intent: { subIntent: 'TEAM_ROSTER', targetType: 'TEAM', confidence: intent.confidence, countOnly: true, searchParams: { team: g.team, role: g.role } } });
+          return { label: g.label, count: part.needsClarification || part.fallback ? null : part.totalMatches, ...(part.needsClarification || part.fallback ? { reason: 'group_unresolved' } : {}) };
+        });
+      }
+      return response;
     }
 
     case "REPORTING_LINE": {
       if (!norm(ref)) return empty({ suggestCorrection: true });
-      const person = findByNickname(directory, ref)[0] ?? findByName(directory, ref)[0];
+      const nickHits = findByNickname(directory, ref);
+      const people = nickHits.length ? nickHits : findByName(directory, ref);
+      if (people.length > 1) return empty({ needsClarification: true, clarificationKind: 'person', clarifyOptions: people.slice(0, 5).map(p => p.fullNameTh) });
+      const person = people[0];
       if (!person) return empty({ fallback: true, suggestCorrection: true });
       const sup = findSupervisor(directory, person.email);
       if (sup.status !== "resolved") return empty({ fallback: true, suggestCorrection: true });
@@ -358,8 +379,9 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       return topicSearch(input, ref);
 
     case "CONTACT_HELP":
-    case "CORRECTION":
       return empty();
+    case 'CORRECTION':
+      return sp.personRef ? retrieve({ ...input, intent: { ...intent, subIntent: 'PERSON_LOOKUP' } }) : empty({ suggestCorrection: true });
     default:
       return empty();
   }

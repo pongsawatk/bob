@@ -5,6 +5,8 @@ import { remainingHolidaysBlock } from "../kb/holidays.js";
 import { selectDocs, type SelectResult } from "../kb/select.js";
 import { env } from "../env.js";
 import type { Category } from "./router.js";
+import { guardEligibility } from '../prompts/systemPolicy.js';
+import { timesheetEditGap } from '../kb/taskEvidence.js';
 
 export interface DomainResult extends LLMResult {
   category: Category;
@@ -18,6 +20,8 @@ export interface DomainResult extends LLMResult {
   kbMs: number;
   /** KB retrieval stats (HR only) — how much of the bundle was sent this turn. */
   kbSelect?: SelectResult;
+  eligibilityGuarded?: boolean;
+  evidenceGap?: 'timesheet_edit_workflow';
 }
 
 const CLARIFY_RESPONSE =
@@ -36,7 +40,8 @@ export async function callDomainBot(
   userName = "คุณ",
   department = "",
   history: LLMMessage[] = [],
-  profileBlock?: string
+  profileBlock?: string,
+  kbSources = { getHRBundle, getProductBundle },
 ): Promise<DomainResult> {
   if (category === "UNKNOWN") {
     return {
@@ -58,8 +63,12 @@ export async function callDomainBot(
     const promptMs = Date.now() - tPrompt;
     const tKb = Date.now();
     // Trim the bundle to the docs relevant to this question (see kb/select.ts).
-    const kbSelect = selectDocs(message, await getHRBundle());
+    const kbSelect = selectDocs(message, await kbSources.getHRBundle(), history);
     const kbMs = Date.now() - tKb;
+    const gap = timesheetEditGap(message, kbSelect.bundle, history);
+    if (gap) return { category, text: gap, model: '', promptVersion, promptMs, kbMs, kbSelect,
+      evidenceGap: 'timesheet_edit_workflow', latencyMs: 0, costUsd: 0,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } };
     // Inject today's date PLUS a precomputed "remaining holidays" list so the model
     // reports it instead of doing (error-prone) date arithmetic. See kb/holidays.ts.
     const holidays = remainingHolidaysBlock();
@@ -79,7 +88,8 @@ export async function callDomainBot(
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
       userContext: profileBlock,
     });
-    return { ...result, category, model: env.MODEL_HR, promptVersion, promptMs, kbMs, kbSelect };
+    const guarded = guardEligibility(result.text);
+    return { ...result, text: guarded.text, eligibilityGuarded: guarded.guarded, category, model: env.MODEL_HR, promptVersion, promptMs, kbMs, kbSelect };
   }
 
   if (category === "PRODUCT") {
@@ -87,7 +97,7 @@ export async function callDomainBot(
     const { text: template, version: promptVersion } = await getPrompt("product");
     const promptMs = Date.now() - tPrompt;
     const tKb = Date.now();
-    const kb = await getProductBundle();
+    const kb = await kbSources.getProductBundle();
     const kbMs = Date.now() - tKb;
     const systemPrompt = template
       .replace("{{KB_BUNDLE}}", kb)

@@ -73,6 +73,8 @@ export interface IntentResult {
   /** the user asked "how many", not "who" → answer the exact deterministic count
    *  and ship no roster to the responder (WP-02). */
   countOnly?: boolean;
+  /** Explicit requested subgroups, intersected with the parent filters. */
+  countGroups?: Array<{ label: string; team?: string; role?: string }>;
   /** who the question is about (WP-01). Absent = legacy/unknown; retrieval treats
    *  it as NAMED_PERSON/TEAM exactly as before. */
   targetType?: TargetType;
@@ -140,6 +142,15 @@ export function validateIntentResult(x: unknown): string[] {
   if (typeof o.confidence !== "number" || !(o.confidence >= 0 && o.confidence <= 1))
     e.push("confidence must be a number in [0,1]");
   if (o.countOnly !== undefined && typeof o.countOnly !== "boolean") e.push("countOnly must be a boolean");
+  if (o.countGroups !== undefined) {
+    if (!Array.isArray(o.countGroups) || o.countGroups.length < 1 || o.countGroups.length > 6 || o.countOnly !== true || !['TEAM_ROSTER', 'FOLLOW_UP_FILTER'].includes(String(o.subIntent))) e.push('invalid countGroups scope');
+    else for (const g of o.countGroups) {
+      if (!g || typeof g !== 'object' || typeof g.label !== 'string' || !g.label.trim() || g.label.length > 80 ||
+        ![g.team, g.role].some(v => typeof v === 'string' && v.trim()) ||
+        Object.keys(g).some(k => !['label', 'team', 'role'].includes(k)) ||
+        [g.team, g.role].some(v => v !== undefined && (typeof v !== 'string' || !v.trim() || v.length > 80))) e.push('invalid count group');
+    }
+  }
   if (o.targetType !== undefined && !(TARGET_TYPES as readonly string[]).includes(o.targetType as string))
     e.push("targetType must be one of TARGET_TYPES");
   const sp = o.searchParams;

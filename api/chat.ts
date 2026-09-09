@@ -34,6 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const result = await runPipeline({
       message,
+      channel: 'test',
       userId: userId ?? "test-user",
       userName: userName ?? "Tester",
       department: department ?? "",

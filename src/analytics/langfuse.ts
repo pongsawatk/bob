@@ -14,7 +14,8 @@
 
 // ── Metric Contract constants (§2, §3) ────────────────────────────────
 /** Test/bot senders excluded before any metric (run-eval.mjs, dev server, CLIs). */
-export const EXCLUDED_USER_IDS = new Set(["eval", "dev-user", "cli", "smoke", "qa"]);
+export const EXCLUDED_USER_IDS = new Set(["eval", "dev-user", "test-user", "cli", "smoke", "qa", "migration-smoke"]);
+const TEST_CHANNELS = new Set(['eval', 'test', 'dev', 'cli', 'smoke', 'qa', 'migration-smoke']);
 /** Per-category max_tokens from domainBot.ts — a turn at/over its cap was truncated. */
 export const OUTPUT_TOKEN_CAP: Record<string, number> = { HR: 1300, PRODUCT: 2000, GENERAL: 800 };
 /** Only these traces are user turns. */
@@ -79,6 +80,10 @@ export interface NormalizedTurn {
   channel: string;
   hasCategory: boolean; // completeness signal
   hasLatency: boolean; // completeness signal
+  answerStatus?: string;
+  outcomeSource?: string;
+  deliveryStatus?: string;
+  reviewRequired?: boolean;
 }
 
 export interface Window {
@@ -153,9 +158,13 @@ export function normalizeTrace(t: RawTrace): NormalizedTurn | null {
     ? md.tags.filter((tag): tag is string => typeof tag === "string")
     : [];
   const catRaw = typeof md.category === "string" ? md.category : undefined;
+  const trafficTags = [...tags, ...metadataTags].map(t => t.toLowerCase());
+  const channel = typeof md.channel === 'string' ? md.channel.toLowerCase() : trafficTags.includes('teams') ? 'teams' : 'unknown';
+  if (TEST_CHANNELS.has(channel) || trafficTags.some(t => TEST_CHANNELS.has(t)) || md.testTraffic === true) return null;
   const outputTokens = num(md.outputTokens);
   const cap = catRaw ? OUTPUT_TOKEN_CAP[catRaw] : undefined;
   const tsMs = Date.parse(t.timestamp);
+  if (!Number.isFinite(tsMs)) return null;
   // Prefer trace-level latency (seconds → ms); fall back to the pipeline's metadata.
   const latencyMs = t.latency != null ? t.latency * 1000 : num(md.latencyMs);
 
@@ -176,9 +185,13 @@ export function normalizeTrace(t: RawTrace): NormalizedTurn | null {
     // Langfuse returns tags alphabetically sorted, so tags[0] is NOT reliably the
     // channel (confirmed by G1 spike). Read metadata.channel, which the pipeline
     // stamps explicitly; fall back to tags only if absent.
-    channel: typeof md.channel === "string" ? md.channel : typeof tags[0] === "string" ? tags[0] : "unknown",
+    channel,
     hasCategory: catRaw != null,
     hasLatency: latencyMs > 0,
+    answerStatus: ['answered', 'clarification', 'no_information', 'partial', 'refused', 'failed'].includes(String(md.answerStatus)) ? String(md.answerStatus) : 'unknown',
+    outcomeSource: ['deterministic', 'text_heuristic', 'router'].includes(String(md.outcomeSource)) ? String(md.outcomeSource) : 'unknown',
+    deliveryStatus: ['sent', 'failed', 'unknown'].includes(String(md.deliveryStatus)) ? String(md.deliveryStatus) : 'not_recorded',
+    reviewRequired: md.reviewRequired === true,
   };
 }
 
@@ -382,7 +395,10 @@ export async function fetchObservations(
 /** Collapse observation rows to the turn-shaped contract consumed by BOB. */
 export function observationsToTraces(observations: RawObservation[]): RawTrace[] {
   const grouped = new Map<string, RawObservation[]>();
+  const seen = new Set<string>();
   for (const observation of observations) {
+    if (seen.has(observation.id)) continue;
+    seen.add(observation.id);
     if (!observation.traceId) continue;
     const group = grouped.get(observation.traceId) ?? [];
     group.push(observation);
@@ -393,11 +409,15 @@ export function observationsToTraces(observations: RawObservation[]): RawTrace[]
   for (const [traceId, group] of grouped) {
     const root =
       group.find((o) => o.isRootObservation === true) ??
-      group.find((o) => o.parentObservationId == null) ??
-      [...group].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))[0];
+      group.find((o) => o.parentObservationId == null);
     if (!root) continue;
     const totalCost = group.reduce((sum, o) => sum + num(o.totalCost ?? o.costDetails?.total), 0);
-    const metadata = parseJsonField(root.metadata);
+    const rawMetadata = parseJsonField(root.metadata);
+    const delivery = group.find(o => o.name === 'delivery');
+    const deliveryOutput = parseJsonField(delivery?.output);
+    const metadata = { ...(rawMetadata && typeof rawMetadata === 'object' ? rawMetadata : {}),
+      ...(deliveryOutput && typeof deliveryOutput === 'object' ? { deliveryStatus: (deliveryOutput as Record<string, unknown>).deliveryStatus } : {}),
+    };
     const metadataLatency =
       metadata && typeof metadata === "object" && typeof (metadata as Record<string, unknown>).latencyMs === "number"
         ? ((metadata as Record<string, number>).latencyMs ?? 0) / 1000

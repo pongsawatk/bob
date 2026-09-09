@@ -4,6 +4,8 @@
 import { ActivityTypes, BotFrameworkAdapter, TeamsInfo, TurnContext, type Activity } from "botbuilder";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { runPipeline, type PipelineOutput } from "../pipeline/index.js";
+import { DeliveryError } from '../pipeline/delivery.js';
+import { withBudget } from '../http/budget.js';
 import { refreshKB } from "../kb/index.js";
 import { lookupProfile, renderProfileBlock, refreshDirectory } from "../people/directory.js";
 import { scoreTrace } from "../obs/langfuse.js";
@@ -86,6 +88,7 @@ function getAdapter(): BotFrameworkAdapter {
     _adapter.onTurnError = async (ctx, err) => {
       console.error("Teams adapter error:", err);
       await alertError("Teams turn", err);
+      if (err instanceof DeliveryError) return; // outcome may be unknown; avoid duplicates
       await ctx.sendActivity("ขออภัยครับ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้งครับ");
     };
   }
@@ -336,9 +339,10 @@ export async function handleTeamsRequest(
     // Real question — keep a typing indicator alive while we resolve identity
     // and run the (sometimes 10–20s) LLM pipeline.
     const stopTyping = startTyping(ctx);
+    const deadlineMs = Date.now() + 45_000;
     try {
       const userName = activity.from.name ?? "คุณ";
-      const email = await resolveEmail(ctx, aadId);
+      const email = await withBudget(4000, () => resolveEmail(ctx, aadId)).catch(() => '');
       const userId = email || aadId;
 
       // Personalization: the asker's own profile only. Any failure (guest,
@@ -346,23 +350,24 @@ export async function handleTeamsRequest(
       let profileBlock: string | undefined;
       let introLine: string | undefined;
       try {
-        const profile = email ? await lookupProfile(email) : null;
+        const profile = email ? await withBudget(4000, () => lookupProfile(email)) : null;
         if (profile) {
           profileBlock = renderProfileBlock(profile);
           // First time we can identify this person (and they didn't already get
           // the launch broadcast) → say so once, so people added to the HR
           // registry after launch still hear the "I know you now" story.
-          introLine = await claimIntro(email, profile.nickname);
+          introLine = await withBudget(2000, () => claimIntro(email, profile.nickname));
         }
       } catch (err) {
         console.error("lookupProfile failed (continuing without profile):", err);
       }
 
       const convId = activity.conversation?.id ?? userId;
-      const history = await getHistory(convId);
+      const history = await withBudget(2000, () => getHistory(convId)).catch(() => []);
 
       const output = await runPipeline({
         message,
+        deadlineMs,
         userId,
         userName,
         history,
@@ -373,13 +378,17 @@ export async function handleTeamsRequest(
         // aadObjectId from the activity. displayName is carried for telemetry but is
         // never a join key — People Connector binds on email alone.
         requester: { email: email || undefined, aadObjectId: aadId, displayName: userName },
+      }, async answer => {
+        const reply = buildAdaptiveCard({ ...answer, answer: introLine ? `${introLine}\n\n${answer.answer}` : answer.answer });
+        await ctx.sendActivity(reply);
       });
 
-      await appendHistory(convId, message, output.answer);
-
-      if (introLine) output.answer = `${introLine}\n\n${output.answer}`;
-      const reply = buildAdaptiveCard(output);
-      await ctx.sendActivity(reply);
+      // Only persist an assistant turn after Teams confirms the send.
+      await Promise.allSettled([
+        withBudget(2000, () => appendHistory(convId, message, output.answer)).catch(() => console.error('[history] save failed')),
+        // Preserve the existing operations alert even when the pipeline returns a safe error reply.
+        output.errorStage ? withBudget(3000, () => alertError('Teams pipeline', new Error(output.errorStage))) : Promise.resolve(),
+      ]);
     } finally {
       stopTyping();
     }

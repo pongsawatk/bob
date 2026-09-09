@@ -14,15 +14,15 @@ if (!PUB || !SEC) {
   process.exit(1);
 }
 const fromDate = new Date(Date.now() - DAYS * 864e5);
-const { fetchTraces } = await import("../src/analytics/langfuse.ts");
+const { fetchTraces, normalizeAll } = await import("../src/analytics/langfuse.ts");
 const allTraces = await fetchTraces(
   { host: HOST, publicKey: PUB, secretKey: SEC },
   { fromMs: fromDate.getTime(), toMs: Date.now() },
 );
 
-// Filter: only real user emails (contains @)
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const realUserTraces = allTraces.filter((t) => t.userId && EMAIL_RE.test(t.userId));
+// Same metric contract as reports: include verified AAD ids; exclude test traffic.
+const eligible = new Set(normalizeAll(allTraces).map(t => t.id));
+const realUserTraces = allTraces.filter(t => eligible.has(t.id));
 
 console.log(`\n=== Langfuse Q&A Analysis — last ${DAYS}d (from ${fromDate.toISOString().slice(0,10)}) ===`);
 console.log(`Total traces: ${allTraces.length}  |  Real-user traces: ${realUserTraces.length}\n`);
@@ -40,7 +40,7 @@ for (const [email, traces] of sortedUsers) {
 }
 
 // Root observation I/O replaces the removed trace-detail endpoint.
-const sampleTraces = realUserTraces.slice(0, Math.min(realUserTraces.length, 100));
+const sampleTraces = realUserTraces;
 const details = sampleTraces.map((trace) => ({ trace, detail: trace }));
 
 // Extract user messages and BOB responses

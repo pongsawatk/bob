@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "../env.js";
 import { fetchRetry } from "../http/fetchRetry.js";
+import { applySystemPolicy } from './systemPolicy.js';
 
 // process.cwd() = project root both locally and on Vercel (/var/task)
 const FALLBACK_DIR = join(process.cwd(), "prompts", "fallback");
@@ -66,8 +67,8 @@ async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
  */
 export async function getPrompt(name: string): Promise<LoadedPrompt> {
   const remote = await fetchFromLangfuse(name);
-  if (remote) return remote;
-  return loadFallback(name);
+  const prompt = remote ?? loadFallback(name);
+  return { ...prompt, text: applySystemPolicy(name, prompt.text) };
 }
 
 /** Clear the in-memory cache (useful in tests or after prompt updates) */

@@ -9,6 +9,7 @@ import { callLLM } from "../llm/openrouter.js";
 import type { LFGeneration } from "../obs/langfuse.js";
 import { env } from "../env.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
+import { applySystemPolicy, SYSTEM_POLICY_VERSION } from '../prompts/systemPolicy.js';
 import { getActiveDirectory, getDirectoryMeta, getDirectoryNames } from "./directory.js";
 import { extractIntent, INTENT_SYSTEM_PROMPT, type LlmCall } from "./intent/extract.js";
 import { evaluatePolicy } from "./policy/gate.js";
@@ -109,6 +110,7 @@ export type PeopleErrorStage =
   | "RESPONDER_VALIDATION_FAILED";
 
 export interface PeopleResult {
+  partialGroups?: boolean;
   text: string;
   outcome: PolicyOutcome;
   subIntent: SubIntent;
@@ -160,7 +162,7 @@ export async function handlePeopleQuery(
     text: string,
     resultCount = 0,
     usedFallback = false,
-    extra: { errorStage?: PeopleErrorStage; responderFallback?: boolean; retrievalFallback?: boolean } = {},
+    extra: { errorStage?: PeopleErrorStage; responderFallback?: boolean; retrievalFallback?: boolean; partialGroups?: boolean } = {},
   ): PeopleResult => {
     deps.audit?.record({
       subIntent: intent.subIntent,
@@ -175,6 +177,7 @@ export async function handlePeopleQuery(
       resultCount,
       usedFallback,
       stages,
+      ...(extra.partialGroups !== undefined ? { partialGroups: extra.partialGroups } : {}),
       ...(intent.extractionFallback ? { intentFallback: true } : {}),
       ...(extra.retrievalFallback ? { retrievalFallback: true } : {}),
       ...(extra.responderFallback ? { responderFallback: true } : {}),
@@ -233,7 +236,8 @@ export async function handlePeopleQuery(
   // Guessing here is how a confident wrong roster gets shipped (WP-05).
   if (response.needsClarification && response.clarifyOptions?.length) {
     const opts = response.clarifyOptions.map((o) => `• ${o}`).join("\n");
-    return finish(`ตอนนี้ในทะเบียนมีมากกว่า 1 ทีมที่ตรงกับที่ถามครับ หมายถึงทีมไหนดีครับ 🙏\n${opts}`, 0, true, {
+    const question = response.clarificationKind === 'person' ? 'หมายถึงบุคคลใดครับ? กรุณาระบุชื่อเต็มจากตัวเลือกเพื่อยืนยัน' : 'ตอนนี้ในทะเบียนมีมากกว่า 1 ทีมที่ตรงกับที่ถามครับ หมายถึงทีมไหนดีครับ 🙏';
+    return finish(`${question}\n${opts}`, 0, true, {
       errorStage: "NEEDS_CLARIFICATION",
     });
   }
@@ -255,6 +259,7 @@ export async function handlePeopleQuery(
     shownCount: response.shownCount,
     truncated: response.truncated,
     countOnly: response.countOnly,
+    countGroups: response.countGroups,
     filtersApplied: response.filtersApplied,
   });
   stages.responderMs = Date.now() - tResponder;
@@ -263,6 +268,7 @@ export async function handlePeopleQuery(
   const base = response.inferred ? composed.text + MSG.confirmHr : composed.text;
   const text = base + (await freshnessNote(deps));
   return finish(text, response.totalMatches, composed.usedFallback, {
+    partialGroups: response.countGroups?.some(g => g.count === null),
     responderFallback: composed.usedFallback,
     // A discarded responder output is an answer we still shipped, but it's the signal
     // that the model is fighting the retrieval result — worth seeing in a trace.
@@ -307,7 +313,7 @@ export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
     temperature: number,
   ): LlmCall =>
     async (user) => {
-      let systemPrompt = inlinePrompt;
+      let systemPrompt = applySystemPolicy(promptName, inlinePrompt);
       let version = "inline";
       try {
         const p = await getPrompt(promptName);
@@ -336,11 +342,12 @@ export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
           total: r.usage.inputTokens + r.usage.outputTokens,
           totalCost: r.costUsd,
         },
+        metadata: { systemPolicyVersion: SYSTEM_POLICY_VERSION },
       });
       return r.text;
     };
 
-  const intentLlm = instrumented("people:intent", "people-intent", INTENT_SYSTEM_PROMPT, env.MODEL_ROUTER, 200, 0);
+  const intentLlm = instrumented("people:intent", "people-intent", INTENT_SYSTEM_PROMPT, env.MODEL_ROUTER, 450, 0);
   // good Thai composing; only reached for answers that actually need phrasing —
   // counts and rosters are templated (WP-03).
   const responderLlm = instrumented("people:responder", "people-responder", RESPONDER_SYSTEM_PROMPT, env.MODEL_HR, 400, 0.3);
