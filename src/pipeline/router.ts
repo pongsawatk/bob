@@ -25,9 +25,10 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
   const promptMs = Date.now() - tPrompt;
   const systemPrompt = promptTemplate.replace("{{user_message}}", message);
 
-  // Include recent conversation context so router understands follow-up questions
+  // User turns establish topics. Old assistant guesses must not steer routing
+  // away from the current source boundary before IT retrieval runs.
   const historyContext = history.length > 0
-    ? history.slice(-4).map(m => `${m.role === "user" ? "ผู้ใช้" : "BOB"}: ${m.content}`).join("\n") + "\n\n"
+    ? history.filter(m => m.role === 'user').slice(-4).map(m => `ผู้ใช้: ${m.content}`).join("\n") + "\n\n"
     : "";
 
   // The category list here must match the system prompt's. It omitted PEOPLE while

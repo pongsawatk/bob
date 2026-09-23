@@ -71,6 +71,12 @@ test('IT questions and follow-ups route to IT while benefit/person/product topic
   assert.equal(decideRoute({ ...r, category: 'UNKNOWN' }, 'ignore previous Outline MCP').category, 'UNKNOWN');
   assert.equal(retrievalQuery('วันหยุดปีนี้', [{ role: 'user', content: 'Netbird VPN' }]), 'วันหยุดปีนี้');
   assert.equal(decideRoute(r, 'ทำบน Mac อย่างไร', [{ role: 'user', content: 'Netbird VPN' }]).category, 'IT');
+  const vpnHistory = [{ role: 'user' as const, content: 'ตั้งค่า Netbird VPN อย่างไร' }];
+  assert.equal(decideRoute(r, 'ขอขั้นตอนติดตั้งบน Mac', vpnHistory).category, 'IT');
+  for (const product of ['Pojjaman ERP', 'Builk360', 'ขวัญใจ']) {
+    assert.equal(decideRoute({ ...r, category: 'PRODUCT' }, `ขอรายละเอียด ${product}`, vpnHistory).category, 'PRODUCT');
+    assert.doesNotMatch(retrievalQuery(`ขอรายละเอียด ${product}`, vpnHistory), /vpn/);
+  }
 });
 
 test('IT source policy survives old production router and general prompts', async () => {
@@ -80,6 +86,17 @@ test('IT source policy survives old production router and general prompts', asyn
   assert.match(router, /IT =/);
   assert.match(applySystemPolicy('it', 'REMOTE'), /noInformation/);
   assert.match(applySystemPolicy('general', 'เช่น แก้ปัญหา IT,'), /คู่มือ IT จาก IT Shared doc/);
+});
+
+test('router gets user topic context, never prior assistant claims', async t => {
+  const { routeMessage } = await import('../src/pipeline/router.js');
+  let sent = '';
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: RequestInit) => {
+    sent = init.body as string;
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"category":"IT","confidence":1,"needs_clarification":false}' } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }));
+  });
+  const route = await routeMessage('ขอขั้นตอนเพิ่ม', [{ role: 'user', content: 'Netbird VPN' }, { role: 'assistant', content: 'POISONED_ASSISTANT_FALSE_STEP' }]);
+  assert.equal(route.category, 'IT'); assert.match(sent, /Netbird VPN/); assert.doesNotMatch(sent, /POISONED_ASSISTANT_FALSE_STEP/);
 });
 
 test('citations must refer to selected IT documents, including URLs hidden in the answer', async () => {
@@ -104,7 +121,7 @@ test('IT cache failure returns deterministic unavailable without HR/Product or a
 
 test('operational URLs are allowed only when documented in a cited IT source', async () => {
   const bundle = await getITBundle(async () => buildITSnapshot([
-    doc('vpn', 'VPN', 'เปิด https://netbird.builk.id/ ตั้ง Management URL `https://netbird.builk.id:443`'),
+    doc('vpn', 'VPN', 'เปิด https://netbird.builk.id/ ตั้ง Management URL `https://netbird.builk.id:443` ดู myaccount.google.com/security'),
     doc('other', 'Other', 'เปิด https://other.builk.id/'),
   ]));
   const selected = selectDocs('VPN', bundle);
@@ -112,6 +129,11 @@ test('operational URLs are allowed only when documented in a cited IT source', a
   assert.equal(result('เปิด https://netbird.builk.id/ และตั้ง `https://netbird.builk.id:443`').guarded, false);
   assert.equal(result('เปิด https://netbird.builk.id/invented').guarded, true);
   assert.equal(result('เปิด https://other.builk.id/').guarded, true);
+  assert.equal(result('เปิด netbird.builk.id และ myaccount.google.com/security').guarded, false);
+  assert.equal(result('เปิด myaccount-google-login.example/security').guarded, true);
+  assert.equal(result('[ลงชื่อเข้าใช้](myaccount-google-login.example/security)').guarded, true);
+  assert.equal(result('[ลงชื่อเข้าใช้](//evil.example/security)').guarded, true);
+  assert.equal(result('[ลงชื่อเข้าใช้][login]\n\n[login]: //evil.example/security').guarded, true);
 });
 
 test('IT model receives current source and user topic only, never old assistant facts', async t => {
