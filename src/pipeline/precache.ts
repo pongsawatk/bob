@@ -39,7 +39,7 @@ const FAQ: Array<{ pattern: RegExp; answer: string; category: "HR" | "GENERAL" }
       "สวัสดีครับ! ผม BOB ผู้ช่วยของ Builk One ครับ\n" +
       "ถามเรื่องไหนได้เลยครับ:\n" +
       "• HR — สวัสดิการ ลา OT เบิกเงิน\n" +
-      "• Product — Insite, Pojjaman, Builk360, JUBILI",
+      "• Product — Insite, Pojjaman, Builk360, JUBILI\n• IT — VPN, เครื่องมือ AI, คู่มือใช้งานระบบ",
   },
   {
     pattern: /^(ขอบคุณ|thanks|thank you|ขอบใจ)[ๆ\s!]*(มาก|ครับ|คับ|ค่ะ|คะ|จ้า|ฮะ)*[ๆ\s!]*$/i,

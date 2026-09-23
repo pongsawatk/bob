@@ -1,6 +1,6 @@
 # BOB Sidekick — Builk One Buddy
 
-> Internal AI Knowledge Assistant for Builk One Group · answers HR / Process / Product
+> Internal AI Knowledge Assistant for Builk One Group · answers HR / Process / Product / IT
 > questions in **MS Teams** with citation-grounded answers, refusal rules for sensitive data,
 > and a feedback loop for continuous knowledge improvement.
 
@@ -35,6 +35,8 @@ MS Teams ⇄ Azure Bot F0 (Single-Tenant) ⇄ Vercel /api/teams
                               │
                        OpenRouter (Gemini + Claude, 1 key, prompt caching)
 ```
+
+**IT knowledge:** technical guides use [IT Shared doc](https://outline.builk.id/collection/it-shared-doc-8oeX9tBu9g/) exclusively. See [source boundary and rollout](docs/implementation/it-shared-doc-2026-09-23.md).
 
 **Golden rule:** edit knowledge in **Outline**, edit prompts in **Langfuse** — neither needs a deploy.
 

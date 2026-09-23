@@ -200,7 +200,8 @@ async function handleRefreshCommand(ctx: TurnContext): Promise<void> {
       `อัปเดตความรู้เรียบร้อยครับ ✅\n` +
         `• HR: ${r.counts.hr} เอกสาร\n` +
         `• Process: ${r.counts.process} เอกสาร\n` +
-        `• Product: ${r.counts.product} เอกสาร` +
+        `• Product: ${r.counts.product} เอกสาร\n` +
+        `• IT: ${r.counts.it ?? 0} เอกสาร` +
         dirLine
     );
   } catch (err) {

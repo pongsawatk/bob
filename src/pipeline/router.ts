@@ -2,7 +2,7 @@ import { callLLM, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { env } from "../env.js";
 
-export type Category = "HR" | "PRODUCT" | "GENERAL" | "PEOPLE" | "UNKNOWN";
+export type Category = "HR" | "PRODUCT" | "IT" | "GENERAL" | "PEOPLE" | "UNKNOWN";
 
 export interface RouterResult {
   category: Category;
@@ -34,7 +34,7 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
   // the system prompt offered it — a contradiction the model resolves by avoiding
   // the category it was told to answer with. (This reminder is load-bearing: without
   // it the router model returns prose instead of JSON.)
-  const userMsg = `${historyContext}คำถามล่าสุด: ${message}\n\nตอบเป็น JSON เท่านั้น: {"category":"HR|PRODUCT|GENERAL|PEOPLE|UNKNOWN","confidence":0.0-1.0,"needs_clarification":boolean}`;
+  const userMsg = `${historyContext}คำถามล่าสุด: ${message}\n\nตอบเป็น JSON เท่านั้น: {"category":"HR|PRODUCT|IT|GENERAL|PEOPLE|UNKNOWN","confidence":0.0-1.0,"needs_clarification":boolean}`;
 
   const result = await callLLM({
     model: env.MODEL_ROUTER,
@@ -63,7 +63,7 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
       confidence?: number;
       needs_clarification?: boolean;
     };
-    const validCategories: Category[] = ["HR", "PRODUCT", "GENERAL", "PEOPLE", "UNKNOWN"];
+    const validCategories: Category[] = ["HR", "PRODUCT", "IT", "GENERAL", "PEOPLE", "UNKNOWN"];
     const category =
       validCategories.includes(parsed.category as Category)
         ? (parsed.category as Category)

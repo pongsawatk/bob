@@ -17,11 +17,11 @@
 export const EXCLUDED_USER_IDS = new Set(["eval", "dev-user", "test-user", "cli", "smoke", "qa", "migration-smoke"]);
 const TEST_CHANNELS = new Set(['eval', 'test', 'dev', 'cli', 'smoke', 'qa', 'migration-smoke']);
 /** Per-category max_tokens from domainBot.ts — a turn at/over its cap was truncated. */
-export const OUTPUT_TOKEN_CAP: Record<string, number> = { HR: 1300, PRODUCT: 2000, GENERAL: 800 };
+export const OUTPUT_TOKEN_CAP: Record<string, number> = { HR: 1300, PRODUCT: 2000, IT: 2000, GENERAL: 800 };
 /** Only these traces are user turns. */
 export const TRACE_NAME = "bob-chat";
 
-export type Intent = "HR" | "PRODUCT" | "GENERAL" | "UNKNOWN" | "PEOPLE" | "OTHER";
+export type Intent = "HR" | "PRODUCT" | "IT" | "GENERAL" | "UNKNOWN" | "PEOPLE" | "OTHER";
 
 // ── Types ─────────────────────────────────────────────────────────────
 
@@ -134,6 +134,7 @@ export function bangkokDayKey(tsMs: number): string {
 
 function normalizeIntent(c?: string): Intent {
   switch (c) {
+    case "IT":
     case "HR":
     case "PRODUCT":
     case "GENERAL":

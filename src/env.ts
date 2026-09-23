@@ -17,6 +17,7 @@ export const env = {
   MODEL_HR:      opt("MODEL_HR",      "anthropic/claude-sonnet-4-6"),
   MODEL_GENERAL: opt("MODEL_GENERAL", "google/gemini-3.1-flash-lite"),
   MODEL_PRODUCT: opt("MODEL_PRODUCT", "anthropic/claude-sonnet-4-6"),
+  MODEL_IT:      opt("MODEL_IT", opt("MODEL_HR", "anthropic/claude-sonnet-4-6")),
   MODEL_ASYNC:   opt("MODEL_ASYNC",   "deepseek/deepseek-v4-flash"),
   MODEL_INSIGHT: opt("MODEL_INSIGHT", ""),  // /insight analysis; empty → MODEL_ASYNC
   INSIGHT_MAX_TOKENS: opt("INSIGHT_MAX_TOKENS", "4000"), // analysis JSON needs ~2.4k+; 2k truncates
@@ -39,6 +40,7 @@ export const env = {
   // When set, HR/Process content comes from here exclusively; hr/process docs in
   // OUTLINE_COLLECTION_IDS are skipped so stale duplicates can't creep in.
   OUTLINE_HR_COLLECTION_IDS: opt("OUTLINE_HR_COLLECTION_IDS"),
+  OUTLINE_IT_COLLECTION_IDS: opt("OUTLINE_IT_COLLECTION_IDS"),
 
   // Shared secret for POST /api/chat (test endpoint). Unset = endpoint disabled.
   CHAT_TEST_KEY: opt("CHAT_TEST_KEY"),

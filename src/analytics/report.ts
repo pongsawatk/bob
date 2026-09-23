@@ -18,7 +18,7 @@ export type RecType = "kb" | "feature" | "prompt";
 export type GapCategory =
   | "knowledge" | "routing" | "prompt" | "truncation" | "latency"
   | "error" | "data_quality" | "privacy" | "other";
-const INTENTS = new Set(["HR", "PRODUCT", "GENERAL", "PEOPLE", "UNKNOWN"]);
+const INTENTS = new Set(["HR", "PRODUCT", "IT", "GENERAL", "PEOPLE", "UNKNOWN"]);
 
 export interface SummaryItem { statement: string; evidenceIds: string[]; }
 export interface TopTopic { intent: string; topic: string; evidenceIds: string[]; }

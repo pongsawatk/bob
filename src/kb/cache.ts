@@ -10,7 +10,7 @@ const META_KEY = "bob:kb:meta";
 
 export interface KbMeta {
   refreshedAt: string;
-  counts: { hr: number; process: number; product: number };
+  counts: { hr: number; process: number; product: number; it?: number };
 }
 
 const redis = getRedis;

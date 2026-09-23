@@ -18,6 +18,7 @@ console.log(`  refreshedAt: ${r.refreshedAt}`);
 console.log(`  HR:      ${r.counts.hr} เอกสาร`);
 console.log(`  Process: ${r.counts.process} เอกสาร`);
 console.log(`  Product: ${r.counts.product} เอกสาร`);
+console.log(`  IT:      ${r.counts.it ?? 0} เอกสาร`);
 
 console.log("กำลังดึงทะเบียนพนักงานจาก SharePoint (Graph) → Redis ...");
 try {

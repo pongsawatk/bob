@@ -20,13 +20,17 @@ export interface Bundles {
   product: string;
 }
 
-interface OutlineDoc {
+export interface OutlineDoc {
   id: string;
   title: string;
   text: string;
   parentDocumentId: string | null;
   /** Relative document path from Outline, e.g. "/doc/hr-leave-x5Rxe7yk2k". */
   url?: string;
+  collectionId?: string;
+  publishedAt?: string | null;
+  archivedAt?: string | null;
+  deletedAt?: string | null;
 }
 
 // Top-level parent title prefix → domain
@@ -38,7 +42,7 @@ const DOMAIN_BY_PREFIX: Array<[RegExp, keyof Bundles]> = [
 
 const SEP = "\n\n---\n\n";
 
-async function fetchCollectionDocs(collectionId: string): Promise<OutlineDoc[]> {
+export async function fetchCollectionDocs(collectionId: string): Promise<OutlineDoc[]> {
   const base = env.OUTLINE_BASE_URL.replace(/\/$/, "");
   const out: OutlineDoc[] = [];
   const limit = 100;

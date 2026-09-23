@@ -7,6 +7,8 @@
 import { fetchOutlineBundles, countBlocks, type Bundles } from "./outline.js";
 import { readBundlesFromRedis, writeBundlesToRedis, type KbMeta } from "./cache.js";
 import { loadLocalBundles } from "./local.js";
+import { prepareITSnapshot, writeITSnapshot } from './it.js';
+import { env } from '../env.js';
 
 // Short in-memory TTL: each warm instance re-reads Redis at most once/minute, so
 // an admin /refresh propagates to all instances within ~60s without re-fetching
@@ -56,10 +58,12 @@ export interface RefreshResult {
 /** Pull from Outline, store in Redis, and warm this instance's memory. */
 export async function refreshKB(): Promise<RefreshResult> {
   const bundles = await fetchOutlineBundles();
+  const it = env.OUTLINE_IT_COLLECTION_IDS.trim() ? await prepareITSnapshot() : null;
   const counts = {
     hr: countBlocks(bundles.hr),
     process: countBlocks(bundles.process),
     product: countBlocks(bundles.product),
+    it: it?.docs.length ?? 0,
   };
 
   // Never overwrite a good KB with an empty one. A silent-empty fetch happens
@@ -77,6 +81,7 @@ export async function refreshKB(): Promise<RefreshResult> {
   const meta: KbMeta = { refreshedAt: new Date().toISOString(), counts };
 
   await writeBundlesToRedis(bundles, meta);
+  if (it) await writeITSnapshot(it);
   mem = { bundles, at: Date.now(), source: "outline" };
   return { refreshedAt: meta.refreshedAt, counts };
 }

@@ -52,7 +52,7 @@
 {
   "schemaVersion": "1.0",
   "executiveSummary": [{"statement": "...", "evidenceIds": ["M1"]}],
-  "topTopics": [{"intent": "HR|PRODUCT|GENERAL|PEOPLE|UNKNOWN", "topic": "...", "evidenceIds": ["E1"]}],
+  "topTopics": [{"intent": "HR|PRODUCT|IT|GENERAL|PEOPLE|UNKNOWN", "topic": "...", "evidenceIds": ["E1"]}],
   "gaps": [{"id": "G1", "category": "knowledge|routing|prompt|truncation|latency|error|data_quality|privacy|other", "statement": "...", "severity": "high|medium|low", "evidenceIds": ["M1","E1"]}],
   "recommendations": [{"id": "R1", "priority": "P0|P1|P2", "type": "kb|feature|prompt", "statement": "ระบุผลลัพธ์ที่ต้องการ ไม่แต่งรายละเอียด/target", "evidenceIds": ["M1","E1"], "impact": "high|medium|low", "effort": "high|medium|low", "confidence": "high|medium|low", "owner": null, "dueDate": null, "status": "proposed"}],
   "limitations": [{"statement": "...", "evidenceIds": ["D1"]}]

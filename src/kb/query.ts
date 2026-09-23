@@ -9,8 +9,8 @@ export function canonicalQuery(text: string): string {
     .replace(/ลิงค์|ลิ้งก์|ลิ้งค์|\blink\b/gi, 'ลิงก์');
 }
 
-const HAS_TOPIC = /timesheet|humansoft|วันลา|ลาป่วย|ลากิจ|พักร้อน|วันหยุด|กองทุน|ค่าน้ำมัน|ค่าเดินทาง|กีฬาสี|ห้องประชุม|ภาษี|ที่อยู่|เบอร์|ติดต่อ|plo[y]|พลอย|jubili|insite/i;
-const FOLLOW_UP = /^(?:ขอ|แล้ว|เพิ่ม|แก้|วิธี|ขั้นตอน|ลิงก์|เอกสาร|แบบฟอร์ม|อันนี้|อันนั้น)|^(?:pojjaman|humansoft|ระบบ\s*pojjaman|ระบบ\s*humansoft)(?:\s|ครับ|ค่ะ|$)/i;
+const HAS_TOPIC = /vpn|netbird|2sv|2-step|google workspace|dokploy|claude|kiro|outline|mcp|obsidian|wsl|docker|grab|เครื่องพิมพ์|พิมพ์ซอง|เน็ตเวิร์ก|ไวไฟ|ติดตั้ง|timesheet|humansoft|วันลา|ลาป่วย|ลากิจ|พักร้อน|วันหยุด|กองทุน|ค่าน้ำมัน|ค่าเดินทาง|กีฬาสี|ห้องประชุม|ภาษี|ที่อยู่|เบอร์|ติดต่อ|plo[y]|พลอย|jubili|insite/i;
+const FOLLOW_UP = /^(?:ขอ|แล้ว|ทำ|ถ้า|บน|macos|windows|เพิ่ม|แก้|วิธี|ขั้นตอน|ลิงก์|เอกสาร|แบบฟอร์ม|อันนี้|อันนั้น)|^(?:pojjaman|humansoft|ระบบ\s*pojjaman|ระบบ\s*humansoft)(?:\s|ครับ|ค่ะ|$)/i;
 
 /** Only short referential turns inherit user context. Assistant guesses never
  * become retrieval facts, and an explicit topic switch drops old context. */

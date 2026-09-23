@@ -7,6 +7,9 @@ import { env } from "../env.js";
 import type { Category } from "./router.js";
 import { guardEligibility } from '../prompts/systemPolicy.js';
 import { timesheetEditGap } from '../kb/taskEvidence.js';
+import { getITBundle, IT_COLLECTION_ID } from '../kb/it.js';
+import { validateITAnswer, IT_UNAVAILABLE } from '../kb/itAnswer.js';
+import { retrievalQuery } from '../kb/query.js';
 
 export interface DomainResult extends LLMResult {
   category: Category;
@@ -22,11 +25,13 @@ export interface DomainResult extends LLMResult {
   kbSelect?: SelectResult;
   eligibilityGuarded?: boolean;
   evidenceGap?: 'timesheet_edit_workflow';
+  itCollectionId?: string;
+  citationGuarded?: boolean;
 }
 
 const CLARIFY_RESPONSE =
   "ขออภัยครับ ช่วยอธิบายเพิ่มเติมได้ไหมครับ?\n" +
-  "ผมตอบเรื่อง HR (สวัสดิการ ลา OT เบิกเงิน) และ Product (Insite, Pojjaman, Builk360, JUBILI) ครับ";
+  "ผมตอบเรื่อง HR (สวัสดิการ ลา OT เบิกเงิน), Product และ IT (VPN, เครื่องมือ AI, คู่มือใช้งานระบบ) ครับ";
 
 function currentDateTH(): string {
   return new Date().toLocaleDateString("th-TH", {
@@ -41,7 +46,7 @@ export async function callDomainBot(
   department = "",
   history: LLMMessage[] = [],
   profileBlock?: string,
-  kbSources = { getHRBundle, getProductBundle },
+  kbSources: { getHRBundle: typeof getHRBundle; getProductBundle: typeof getProductBundle; getITBundle?: typeof getITBundle } = { getHRBundle, getProductBundle, getITBundle },
 ): Promise<DomainResult> {
   if (category === "UNKNOWN") {
     return {
@@ -115,6 +120,29 @@ export async function callDomainBot(
       userContext: profileBlock,
     });
     return { ...result, category, model: env.MODEL_PRODUCT, promptVersion, promptMs, kbMs };
+  }
+
+  if (category === 'IT') {
+    const tKb = Date.now();
+    const kb = await (kbSources.getITBundle ?? getITBundle)();
+    const kbMs = Date.now() - tKb;
+    if (!kb) return { category, text: IT_UNAVAILABLE, model: '', promptVersion: '', promptMs: 0, kbMs,
+      itCollectionId: IT_COLLECTION_ID, latencyMs: 0, costUsd: 0,
+      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } };
+    const kbSelect = selectDocs(message, kb, history);
+    const tPrompt = Date.now();
+    const { text: template, version: promptVersion } = await getPrompt('it');
+    const promptMs = Date.now() - tPrompt;
+    const result = await callLLM({
+      model: env.MODEL_IT,
+      systemPrompt: template.replace('{{KB_BUNDLE}}', kbSelect.bundle).replace('{{CURRENT_DATE}}', currentDateTH()),
+      // Only user topic context survives. Old assistant answers cannot become IT evidence.
+      messages: [{ role: 'user', content: retrievalQuery(message, history) }],
+      maxTokens: 2000, temperature: 0.1, cacheSystem: env.MODEL_IT.startsWith('anthropic/'),
+    });
+    const checked = validateITAnswer(result.text, kbSelect);
+    return { ...result, text: checked.text, category, model: env.MODEL_IT, promptVersion, promptMs, kbMs,
+      kbSelect, itCollectionId: IT_COLLECTION_ID, citationGuarded: checked.guarded };
   }
 
   // GENERAL

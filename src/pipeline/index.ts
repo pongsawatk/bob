@@ -273,6 +273,8 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
       ...domainOutcome(botResult.text, routed.category),
       ...(botResult.evidenceGap ? { answerStatus: 'partial', outcomeSource: 'deterministic', evidenceGap: botResult.evidenceGap, reviewRequired: true } : {}),
       eligibilityGuarded: botResult.eligibilityGuarded ?? false,
+      itCollectionId: botResult.itCollectionId,
+      citationGuarded: botResult.citationGuarded,
       // Flag only — never the profile content (keeps PII out of Langfuse).
       hasProfile: !!profileBlock,
       latencyMs: totalMs,

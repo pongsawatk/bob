@@ -28,7 +28,7 @@ const tsOf = (t) => new Date(t.timestamp || t.createdAt);
 const catOf = (t) => {
   const fromMeta = t.metadata?.category;
   if (fromMeta) return fromMeta;
-  const known = ["HR", "PRODUCT", "GENERAL"];
+  const known = ["HR", "PRODUCT", "IT", "GENERAL"];
   return (t.tags || []).find((x) => known.includes(x)) || "UNKNOWN";
 };
 const isPrecache = (t) => (t.tags || []).includes("precache");
