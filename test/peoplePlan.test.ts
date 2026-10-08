@@ -100,6 +100,7 @@ test('roster pagination has no duplicate rows and keeps selection after exhausti
  const first=await handlePeopleQuery('Example มีใครบ้าง',d,{});
  const next=await handlePeopleQuery('ดูต่อ',d,{conversation:first.conversation});
  assert.equal(first.conversation?.shown.length,20);assert.equal(next.conversation?.shown.length,3);
+ assert.match(next.text,/แสดง 3 คนในหน้านี้/);
  assert.equal(new Set([...first.conversation!.shown,...next.conversation!.shown]).size,23);
  const end=await handlePeopleQuery('ดูต่อ',d,{conversation:next.conversation});assert.match(end.text,/ครบแล้ว/);
  const chosen=await handlePeopleQuery('คนแรก',d,{conversation:end.conversation});assert.equal(chosen.resultCount,1);

@@ -190,15 +190,15 @@ export function countTemplate(ctx: ResponseContext): string {
 export function rosterTemplate(ctx: ResponseContext): string {
   if (ctx.totalMatches === 0) return templateFallback([]);
   const what = filterPhrase(ctx);
-  const head = ctx.truncated
-    ? `${what ? `${what} — ` : ""}พบทั้งหมด ${ctx.totalMatches} คนครับ แสดง ${ctx.shownCount} คนแรก:`
+  const head = ctx.shownCount < ctx.totalMatches
+    ? `${what ? `${what} — ` : ""}พบทั้งหมด ${ctx.totalMatches} คนครับ แสดง ${ctx.shownCount} คนในหน้านี้:`
     : `${what ? `${what} — ` : ""}พบ ${ctx.totalMatches} คนครับ:`;
   const lines = ctx.results.map((r, i) => {
     const p = r.profile;
     const who = `${p.displayName}${p.nickname ? ` (${p.nickname})` : ""}`;
     if (ctx.requestedFields?.length) {
       const labels: Record<string, string> = { displayName:'ชื่อ', nickname:'ชื่อเล่น', fullNameEn: 'ชื่อภาษาอังกฤษ', email: 'อีเมล', position: 'ตำแหน่ง', org:'Org',subOrg:'Sub Org',group:'Group',department:'Department',functionTeam: 'Function / Team', supervisor: 'หัวหน้าโดยตรง',supervisor2:'หัวหน้าที่ดูแลภาพรวม', startDate: 'วันเริ่มงาน',tenureYears:'อายุงาน (ปี)',tenureMonths:'อายุงาน (เดือน)' };
-      const fields = ctx.requestedFields.filter(f => Object.hasOwn(labels, f)).map(f => `${labels[f]}: ${String(p[f as keyof typeof p] || 'ยังไม่มีข้อมูลในทะเบียน')}`);
+      const fields = ctx.requestedFields.filter(f => Object.hasOwn(labels, f)).map(f => `${labels[f]}: ${String(p[f as keyof typeof p] ?? 'ยังไม่มีข้อมูลในทะเบียน')}`);
       return `${i + 1}. ${who} — ${fields.join(' · ')}`;
     }
     const role = [p.position, [p.org,p.subOrg].filter(Boolean).join(' / ') || p.functionTeam].filter(Boolean).join(" · ");
