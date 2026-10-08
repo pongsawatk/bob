@@ -28,6 +28,8 @@ export interface Profile {
   /** ISO date (converted from Thai Buddhist year in the sheet). */
   startDate?: string;
   supervisor?: string;
+  /** Supervisor 2: overseeing manager, not an implied approver. */
+  supervisor2?: string;
   /** G0 columns HR adds to the sheet. employmentType = employment status;
    *  ownershipTags = product/thing this person officially owns (comma/newline
    *  separated in the cell). Both undefined until the column exists + is filled. */
@@ -124,7 +126,7 @@ const clean = (v: unknown): string =>
 
 /** Bump when the stored Profile shape changes, so a snapshot written by an older
  *  deploy can be recognized rather than misread. */
-export const DIRECTORY_SCHEMA_VERSION = "2";
+export const DIRECTORY_SCHEMA_VERSION = "3";
 
 /** A profile whose Supervisor cell names nobody we can resolve. */
 export interface UnresolvedSupervisor {
@@ -176,7 +178,8 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
   const iTeam = col(/function/i);
   const iRank = col(/^rank$/i);
   const iStart = col(/วันที่เริ่ม/);
-  const iSup = col(/supervisor/i);
+  const iSup = col(/^supervisor(?:\s*1)?$/i);
+  const iSup2 = col(/^supervisor\s*2$/i);
   const iEmpType = col(/สถานะการจ้าง|employment/i); // G0 column (HR)
   const iOwn = col(/ownership|product\s*owner|ผู้รับผิดชอบ|รับผิดชอบ|ดูแลผลิตภัณฑ์/i); // G0 column (HR)
 
@@ -202,6 +205,7 @@ export function parseRows(rows: unknown[][]): ParsedDirectory {
     if (active[email]) dupes.add(email);
     active[email] = {
       email,
+      ...(iSup2 >= 0 && clean(r[iSup2]) ? { supervisor2: clean(r[iSup2]) } : {}),
       fullNameTh: [clean(r[iFirstTh]), clean(r[iLastTh])].filter(Boolean).join(" "),
       fullNameEn: [clean(r[iFirstEn]), clean(r[iLastEn])].filter(Boolean).join(" ") || undefined,
       nickname: clean(r[iNick]) || undefined,

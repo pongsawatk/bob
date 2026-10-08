@@ -115,7 +115,7 @@ export interface ResponseContext {
   countOnly: boolean;
   requestedFields?: string[];
   countGroups?: Array<{ label: string; count: number | null; reason?: string }>;
-  filtersApplied?: { team?: string; bu?: string; role?: string; topic?: string; personRef?: string };
+  filtersApplied?: { dimension?: string; team?: string; bu?: string; role?: string; topic?: string; personRef?: string };
 }
 
 /** Phrases that assert "nothing found". Deliberately broad: a false positive costs a
@@ -157,7 +157,7 @@ export function validateResponse(output: string, ctx: ResponseContext): PostChec
 function filterPhrase(ctx: ResponseContext): string {
   const f = ctx.filtersApplied ?? {};
   const role = f.role ? ROLE_TH[f.role] ?? f.role : "";
-  const parts = [f.team ? `ทีม ${f.team}` : "", f.bu ? `หน่วยงาน ${f.bu}` : "", role ? `ตำแหน่ง ${role}` : ""].filter(Boolean);
+  const parts = [f.team ? `${f.dimension ?? 'Org / Sub Org'} ${f.team}` : "", f.bu ? `หน่วยงาน ${f.bu}` : "", role ? `ตำแหน่ง ${role}` : ""].filter(Boolean);
   return parts.join(" · ");
 }
 
@@ -197,11 +197,11 @@ export function rosterTemplate(ctx: ResponseContext): string {
     const p = r.profile;
     const who = `${p.displayName}${p.nickname ? ` (${p.nickname})` : ""}`;
     if (ctx.requestedFields?.length) {
-      const labels: Record<string, string> = { fullNameEn: 'ชื่อภาษาอังกฤษ', email: 'อีเมล', position: 'ตำแหน่ง', functionTeam: 'ทีม', supervisor: 'หัวหน้า', startDate: 'วันเริ่มงาน' };
+      const labels: Record<string, string> = { displayName:'ชื่อ', nickname:'ชื่อเล่น', fullNameEn: 'ชื่อภาษาอังกฤษ', email: 'อีเมล', position: 'ตำแหน่ง', org:'Org',subOrg:'Sub Org',group:'Group',department:'Department',functionTeam: 'Function / Team', supervisor: 'หัวหน้าโดยตรง',supervisor2:'หัวหน้าที่ดูแลภาพรวม', startDate: 'วันเริ่มงาน',tenureYears:'อายุงาน (ปี)',tenureMonths:'อายุงาน (เดือน)' };
       const fields = ctx.requestedFields.filter(f => Object.hasOwn(labels, f)).map(f => `${labels[f]}: ${String(p[f as keyof typeof p] || 'ยังไม่มีข้อมูลในทะเบียน')}`);
       return `${i + 1}. ${who} — ${fields.join(' · ')}`;
     }
-    const role = [p.position, p.functionTeam || p.subOrg].filter(Boolean).join(" · ");
+    const role = [p.position, [p.org,p.subOrg].filter(Boolean).join(' / ') || p.functionTeam].filter(Boolean).join(" · ");
     return `${i + 1}. ${who}${role ? ` — ${role}` : ""}${p.email ? ` — ${p.email}` : ""}`;
   });
   const more = ctx.truncated ? `\n\nพิมพ์ "ดูต่อ" เพื่อดูรายชื่อถัดไปครับ` : "";

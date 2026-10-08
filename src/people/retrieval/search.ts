@@ -17,7 +17,7 @@ import {
   type TaggedSearchResult,
 } from "./rank.js";
 import { canonicalRole, rawRoleMatchesPosition, roleMatchesPosition } from "./roles.js";
-import { resolveTeamAlias } from "./aliases.js";
+import { resolveTeamScope } from "./aliases.js";
 
 export interface TagInfo {
   ownershipTags?: string[];
@@ -48,6 +48,7 @@ export interface RetrieveInput {
   now?: Date;
   /** page size for roster results; defaults to PC_CONFIG.TEAM_ROSTER_MAX. */
   limit?: number;
+  offset?: number;
   /** the asker's own profile, when their identity resolved (WP-01). Required for
    *  targetType SELF; absent means we must not answer a self question at all. */
   requester?: Profile;
@@ -58,6 +59,7 @@ export interface RetrieveInput {
 /** The canonical filters retrieval actually applied — echoed back so the answer can
  *  state what was searched, and so a dropped constraint is visible in a trace. */
 export interface FiltersApplied {
+  dimension?: string;
   team?: string;
   bu?: string;
   role?: string;
@@ -137,6 +139,9 @@ export function toWorkProfile(p: Profile, tags?: TagInfo, now = new Date()): Wor
     position: p.position,
     functionTeam: p.team,
     supervisor: p.supervisor,
+    supervisor2: p.supervisor2,
+    group: p.group,
+    department: p.department,
     startDate: p.startDate,
     tenureYears: t?.years,
     tenureMonths: t?.months,
@@ -166,14 +171,15 @@ const empty = (over: Partial<SearchResponse> = {}): SearchResponse => ({
  *  keeps the totals but ships no rows. */
 function page(
   all: readonly SearchResult[],
-  opts: { limit: number; countOnly: boolean; filtersApplied: FiltersApplied; inferred?: boolean },
+  opts: { limit: number; countOnly: boolean; filtersApplied: FiltersApplied; inferred?: boolean; offset?: number },
 ): SearchResponse {
-  const shown = opts.countOnly ? [] : all.slice(0, opts.limit);
+  const offset = Math.max(0, opts.offset ?? 0);
+  const shown = opts.countOnly ? [] : all.slice(offset, offset + opts.limit);
   return {
     results: [...shown],
     totalMatches: all.length,
     shownCount: shown.length,
-    truncated: shown.length < all.length && !opts.countOnly,
+    truncated: offset + shown.length < all.length && !opts.countOnly,
     candidateIds: shown.map((r) => r.profile.email ?? "").filter(Boolean),
     filtersApplied: opts.filtersApplied,
     countOnly: opts.countOnly,
@@ -231,7 +237,7 @@ export function retrieve(input: RetrieveInput): SearchResponse {
     const me = input.requester;
 
     if (intent.subIntent === "REPORTING_LINE") {
-      const sup = findSupervisor(directory, me.email);
+      const sup = findSupervisor(directory, me.email, intent.supervisorLevel);
       if (sup.status !== "resolved") {
         // "You're at the top" and "your Supervisor cell is broken" both mean we have
         // no name to give — say so rather than invent one.
@@ -247,11 +253,11 @@ export function retrieve(input: RetrieveInput): SearchResponse {
     // "ทีมผมมีใครบ้าง" asks about the team, not the person — resolve which team from
     // the requester's profile, then answer it as an ordinary roster query.
     if (intent.subIntent === "TEAM_ROSTER") {
-      const myTeam = me.subOrg || me.department || me.team || me.org;
+      const myTeam = me.subOrg || me.org;
       if (!norm(myTeam)) return empty({ fallback: true, filtersApplied: { personRef: "self" } });
       return retrieve({
         ...input,
-        intent: { ...intent, targetType: "TEAM", searchParams: { ...sp, team: myTeam } },
+        intent: { ...intent, targetType: "TEAM", searchParams: { ...sp, team: myTeam, bu: me.org }, dimension: 'primary' },
       });
     }
 
@@ -270,21 +276,27 @@ export function retrieve(input: RetrieveInput): SearchResponse {
     case "TENURE":
     case "PERSON_LOOKUP": {
       if (!norm(ref)) return empty({ suggestCorrection: true });
+      let candidates = directory;
+      if (sp.team || sp.bu || sp.role) {
+        const scoped = retrieve({ ...input, intent: { ...intent, subIntent: 'TEAM_ROSTER', countOnly: false, searchParams: { ...sp, personRef: undefined } }, limit: Number.MAX_SAFE_INTEGER });
+        if (scoped.needsClarification) return scoped;
+        candidates = Object.fromEntries(scoped.results.map(r => r.profile.email).filter((e): e is string => !!e).map(e => [e, directory[e]!]).filter(([,p]) => !!p));
+      }
       const seen = new Set<string>();
       const ordered: DirectorySearchResult[] = [];
-      for (const p of findByNickname(directory, ref)) {
+      for (const p of findByNickname(candidates, ref)) {
         if (!seen.has(p.email)) (seen.add(p.email), ordered.push(dir(p, "nickname_match", input)));
       }
-      for (const p of findByName(directory, ref)) {
+      for (const p of findByName(candidates, ref)) {
         if (!seen.has(p.email)) (seen.add(p.email), ordered.push(dir(p, "name_match", input)));
       }
       if (ordered.length === 0) {
-        const suggestions = suggestNames(directory, ref);
-        return empty({ fallback: true, suggestCorrection: true, needsClarification: suggestions.length > 0, clarificationKind: 'person', clarifyOptions: suggestions.map(p => p.fullNameTh) });
+        const suggestions = suggestNames(candidates, ref);
+        return empty({ fallback: true, suggestCorrection: true, needsClarification: suggestions.length > 0, clarificationKind: 'person', candidateIds: suggestions.map(p => p.email), clarifyOptions: suggestions.map(p => `${p.fullNameTh} — ${[p.org,p.subOrg].filter(Boolean).join(' / ')}`) });
       }
       const nickHits = ordered.filter(r => r.reasonCode === 'nickname_match');
       const ambiguous = nickHits.length ? nickHits : ordered;
-      if (ambiguous.length > 1) return empty({ needsClarification: true, clarificationKind: 'person', clarifyOptions: ambiguous.slice(0, 5).map(r => `${r.profile.displayName}${r.profile.subOrg ? ` — ${r.profile.subOrg}` : ''}`) });
+      if (ambiguous.length > 1) return empty({ needsClarification: true, clarificationKind: 'person', candidateIds: ambiguous.slice(0,5).map(r => r.profile.email!), clarifyOptions: ambiguous.slice(0, 5).map(r => `${r.profile.displayName} — ${[r.profile.org,r.profile.subOrg].filter(Boolean).join(' / ')}`) });
       return page(ordered, {
         limit: input.limit ?? PC_CONFIG.MAX_RESULTS_FIRST_PAGE,
         countOnly,
@@ -310,12 +322,14 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       // never appear verbatim in the registry, which is why they returned 0.
       let teamTerm = rawTeam;
       let canonicalTeam = false;
+      let scopeFields: Array<'org' | 'subOrg' | 'group' | 'department' | 'team'> = intent.dimension && intent.dimension !== 'primary' ? [intent.dimension] : ['org', 'subOrg'];
+      if (!Object.values(directory).some(p => p.org || p.subOrg) && (!intent.dimension || intent.dimension === 'primary')) scopeFields = ['department','team','group'];
       if (norm(rawTeam)) {
-        const alias = resolveTeamAlias(directory, rawTeam);
+        const alias = resolveTeamScope(directory, rawTeam, intent.dimension);
         if (alias.status === "ambiguous") {
           return empty({ needsClarification: true, clarifyOptions: alias.options, filtersApplied: { team: rawTeam } });
         }
-        if (alias.status === "resolved") (teamTerm = alias.canonical), (canonicalTeam = true);
+        if (alias.status === "resolved") (teamTerm = alias.canonical), (canonicalTeam = true), (scopeFields = alias.fields);
       }
 
       // A canonical value is the registry's own spelling, so match it exactly. Token
@@ -324,8 +338,11 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       let members = !norm(teamTerm)
         ? Object.values(directory).sort((a, b) => a.fullNameTh.localeCompare(b.fullNameTh, "th"))
         : canonicalTeam
-          ? matchByCanonicalTeam(directory, teamTerm)
-          : matchByTopic(directory, teamTerm, Number.MAX_SAFE_INTEGER, !input.teamFieldsOnly);
+          ? Object.values(directory).filter(p => scopeFields.some(f => norm(p[f]) === norm(teamTerm)))
+          : Object.values(directory).filter(p => scopeFields.some(f => norm(p[f]).includes(norm(teamTerm))));
+      members.sort((a,b) => a.fullNameTh.localeCompare(b.fullNameTh, 'th'));
+      if (intent.dimension && intent.dimension !== 'primary') filtersApplied.dimension = intent.dimension;
+      else if (scopeFields.length===1 && !['org','subOrg'].includes(scopeFields[0]!)) filtersApplied.dimension=scopeFields[0];
       if (norm(teamTerm)) filtersApplied.team = teamTerm;
 
       // AND, not OR: each filter narrows what the previous one left.
@@ -339,9 +356,19 @@ export function retrieve(input: RetrieveInput): SearchResponse {
         members = applied.people;
         filtersApplied.role = applied.canonical;
       }
+      if (sp.excludeTeam) {
+        const excluded = resolveTeamScope(directory, sp.excludeTeam, intent.dimension);
+        if (excluded.status !== 'resolved') return empty({ needsClarification: true, clarifyOptions: excluded.status === 'ambiguous' ? excluded.options : [sp.excludeTeam], filtersApplied });
+        members = members.filter(p => !excluded.fields.some(f => norm(p[f]) === norm(excluded.canonical)));
+      }
+      if (sp.excludeRole) {
+        const excluded = new Set(applyRole(members, sp.excludeRole).people.map(p => p.email));
+        members = members.filter(p => !excluded.has(p.email));
+      }
 
       if (members.length === 0) return empty({ fallback: true, filtersApplied });
       const response = page(members.map((p) => dir(p, "team_member", input)), {
+        offset: input.offset,
         limit: input.limit ?? PC_CONFIG.TEAM_ROSTER_MAX,
         countOnly,
         filtersApplied,
@@ -358,13 +385,13 @@ export function retrieve(input: RetrieveInput): SearchResponse {
 
     case "REPORTING_LINE": {
       if (!norm(ref)) return empty({ suggestCorrection: true });
-      const nickHits = findByNickname(directory, ref);
-      const people = nickHits.length ? nickHits : findByName(directory, ref);
-      if (people.length > 1) return empty({ needsClarification: true, clarificationKind: 'person', clarifyOptions: people.slice(0, 5).map(p => p.fullNameTh) });
-      const person = people[0];
+      const found = retrieve({ ...input, intent: { ...intent, subIntent: 'PERSON_LOOKUP' } });
+      if (found.needsClarification) return found;
+      const email = found.results[0]?.profile.email;
+      const person = email ? directory[email] : undefined;
       if (!person) return empty({ fallback: true, suggestCorrection: true });
-      const sup = findSupervisor(directory, person.email);
-      if (sup.status !== "resolved") return empty({ fallback: true, suggestCorrection: true });
+      const sup = findSupervisor(directory, person.email, intent.supervisorLevel);
+      if (sup.status !== "resolved") return empty({ fallback: true, noSupervisor: true, suggestCorrection: true });
       return page([dir(sup.supervisor, "supervisor", input)], {
         limit: 1,
         countOnly: false, // "who is X's boss" is never a count question
@@ -380,7 +407,8 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       return topicSearch(input, ref);
 
     case "CONTACT_HELP":
-      return empty();
+      return sp.personRef ? retrieve({ ...input, intent: { ...intent, subIntent: 'PERSON_LOOKUP' } })
+        : sp.team || sp.bu ? retrieve({ ...input, intent: { ...intent, subIntent: 'TEAM_ROSTER' } }) : empty();
     case 'CORRECTION':
       return sp.personRef ? retrieve({ ...input, intent: { ...intent, subIntent: 'PERSON_LOOKUP' } }) : empty({ suggestCorrection: true });
     default:

@@ -18,7 +18,11 @@ import { retrieve, tagMapFromDirectory, type TagMap } from "./retrieval/search.j
 import { employmentPolicyFromEnv, filterServable, type EmploymentPolicy } from "./policy/employment.js";
 import { compose, templateFallback } from "./responder/compose.js";
 import { createAuditLog, type AuditLog } from "./audit/log.js";
-import { type PolicyOutcome, type SubIntent, type TargetType } from "./pcTypes.js";
+import { type PolicyOutcome, type SubIntent, type TargetType, type IntentResult } from "./pcTypes.js";
+import { runPeoplePlan, requestedPeopleFields } from './plan.js';
+import type { PeopleConversation } from './context/conversation.js';
+import { loadContactEvidence, type ContactEvidence } from './contact/evidence.js';
+import { templateDraft } from './contact/draft.js';
 import { resolveRequester, type IdentityStatus, type RequesterIdentity } from "./identity.js";
 import type { Profile } from "./directory.js";
 import type { ProfileMap } from "./profileStore.js";
@@ -43,10 +47,11 @@ const MSG = {
   profileInactive:
     "ขอโทษครับ สถานะพนักงานของบัญชีนี้ในทะเบียนยังไม่พร้อมให้ผมตอบข้อมูลส่วนตัวครับ 🙏 รบกวนสอบถาม HR โดยตรงนะครับ",
   noSupervisor:
-    "ผมดูในทะเบียนแล้วไม่พบชื่อหัวหน้าที่ระบุไว้ครับ 🙏 อาจเป็นเพราะยังไม่ได้กรอกไว้ หรือคุณอยู่ระดับบนสุดของสายงาน — รบกวนยืนยันกับ HR อีกทีนะครับ",
+    "ทะเบียนยังไม่ระบุหัวหน้าที่ตรงกับคำถามครับ จึงยังยืนยันบุคคลให้ไม่ได้",
 };
 
 export interface PeopleDeps {
+  getContacts?: (topic:string,directory:ProfileMap)=>Promise<ContactEvidence[]>;
   deterministicResponses?: boolean;
   intentLlm: LlmCall;
   responderLlm: LlmCall;
@@ -70,6 +75,9 @@ export interface PeopleDeps {
 /** Who is asking, and what was said just before. Typed and explicit — never read off
  *  global/request metadata, so one conversation's context cannot reach another's. */
 export interface PeopleContext {
+  conversation?: PeopleConversation;
+  intent?: IntentResult;
+  offset?: number;
   requester?: RequesterIdentity;
   /** recent turns of THIS conversation, for follow-ups ("เอาเฉพาะ tester"). Passed by
    *  the caller that owns the conversation scope; the connector holds no state. */
@@ -112,6 +120,10 @@ export type PeopleErrorStage =
   | "RESPONDER_VALIDATION_FAILED";
 
 export interface PeopleResult {
+  conversation?: PeopleConversation;
+  matchedEmails?: string[];
+  requestCount?: number;
+  completedRequests?: number;
   partialGroups?: boolean;
   text: string;
   outcome: PolicyOutcome;
@@ -144,6 +156,14 @@ export async function handlePeopleQuery(
   deps: PeopleDeps,
   ctx: PeopleContext = {},
 ): Promise<PeopleResult> {
+  return runPeoplePlan(query,deps,ctx,handleSinglePeopleQuery);
+}
+
+async function handleSinglePeopleQuery(
+  query: string,
+  deps: PeopleDeps,
+  ctx: PeopleContext = {},
+): Promise<PeopleResult> {
   const now = deps.now ?? new Date();
   const selfEnabled = deps.selfEnabled !== false;
   const stages: NonNullable<PeopleResult["stages"]> = {};
@@ -151,14 +171,15 @@ export async function handlePeopleQuery(
   const tIntent = Date.now();
   // History is what turns "เอาเฉพาะ tester" from an unanswerable fragment into
   // team=DX AND role=tester. The extractor always accepted one; nothing ever passed it.
-  const intent = await extractIntent(query, deps.intentLlm, { history: ctx.history });
+  const intent = ctx.intent ?? await extractIntent(query, deps.intentLlm, { history: ctx.history });
   stages.intentMs = Date.now() - tIntent;
 
-  const decision = evaluatePolicy({ queryText: query, intentResult: intent });
+  const decision = evaluatePolicy({ queryText: query, intentResult: intent, requestedFields:intent.requestedFields });
   const isSelf = selfEnabled && intent.targetType === "SELF";
 
   let identityOutcome: IdentityStatus | undefined;
   let identityKeyOut: string | undefined;
+  let matchedEmails: string[] = [];
 
   const finish = (
     text: string,
@@ -179,6 +200,7 @@ export async function handlePeopleQuery(
       resultCount,
       usedFallback,
       stages,
+      matchedEmails,
       ...(extra.partialGroups !== undefined ? { partialGroups: extra.partialGroups } : {}),
       ...(intent.extractionFallback ? { intentFallback: true } : {}),
       ...(extra.retrievalFallback ? { retrievalFallback: true } : {}),
@@ -191,6 +213,7 @@ export async function handlePeopleQuery(
   };
 
   if (decision.outcome === "REFUSE") return finish(MSG.refuse, 0, false, { errorStage: "POLICY_REFUSE" });
+  if (/รหัสพนักงาน|employee\s*(?:id|code)/i.test(query)) return finish('BOB ยังไม่ให้ข้อมูลรหัสพนักงานครับ กรุณาตรวจจากระบบพนักงานหรือติดต่อ HR',0,false,{errorStage:'POLICY_REFUSE'});
   if (decision.outcome === "CLARIFY" || decision.outcome === "UNABLE_TO_DETERMINE") {
     // An unparseable question and a genuinely vague one both land here but are
     // different problems: one is a model/prompt failure, the other is the user.
@@ -203,6 +226,17 @@ export async function handlePeopleQuery(
   // gate excludes (inert until HR fills the status column + configures it).
   const all = await deps.getDirectory();
   const directory = filterServable(all, deps.employmentPolicy ?? {});
+  if (intent.contactKind === 'shared') {
+    const evidence=await deps.getContacts?.(intent.searchParams.team??intent.searchParams.topic??'',directory)??[];
+    const shared=evidence.filter(e=>e.sharedEmail);
+    return shared.length?finish(shared.map(e=>`อีเมลกลาง: ${e.sharedEmail}\nอ้างอิง: ${e.sourceUrl}`).join('\n')):finish('ทะเบียนนี้มีอีเมลบุคคล แต่ยังไม่มีข้อมูลอีเมลกลางของแผนกที่ยืนยันได้ครับ หากต้องการรายชื่อสมาชิกและอีเมลงานของทีม ระบุชื่อทีมได้เลย',0,false,{errorStage:'NO_RESULT'});
+  }
+  if (intent.subIntent === 'TEAM_LIST') {
+    const dimension=intent.dimension??'primary';
+    const fields=dimension==='primary'?['org','subOrg'] as const:[dimension] as const;
+    const lines=fields.map(f=>`${f==='org'?'Org (สังกัดหลัก)':f==='subOrg'?'Sub Org (ทีมย่อย)':f}:\n${[...new Set(Object.values(directory).map(p=>p[f]).filter(Boolean))].sort().map(n=>'• '+n).join('\n')}`);
+    return finish(lines.join('\n\n')+await freshnessNote(deps));
+  }
 
   // Bind the asker before retrieval when the question is about them. Each failure is
   // its own answer: telling someone "ไม่พบ" when we simply couldn't identify them is
@@ -229,7 +263,22 @@ export async function handlePeopleQuery(
 
   const tags = deps.tags ?? tagMapFromDirectory(directory);
   const tRetrieval = Date.now();
-  const response = retrieve({ intent: isSelf ? intent : { ...intent, targetType: undefined }, directory, tags, now, requester });
+  const response = retrieve({ intent: isSelf ? intent : { ...intent, targetType: undefined }, directory, tags, now, requester, offset:ctx.offset });
+  matchedEmails = response.candidateIds;
+  if (['OWNER_LOOKUP','EXPERT_FIND','EXPERIENCE_FIND','IDEA_CONNECT','TEAM_DISCOVERY'].includes(intent.subIntent) && (!response.totalMatches || response.inferred)) {
+    const evidence=['OWNER_LOOKUP','TEAM_DISCOVERY'].includes(intent.subIntent)?await deps.getContacts?.(intent.searchParams.topic??'',directory)??[]:[];
+    const answers:string[]=[];
+    matchedEmails=[];
+    for(const e of evidence){
+      const contacts=retrieve({directory,now,intent:{subIntent:e.personEmail?'PERSON_LOOKUP':'TEAM_ROSTER',searchParams:e.personEmail?{personRef:e.personEmail}:{team:e.team},confidence:1}});
+      if(!contacts.results.length)continue;
+      matchedEmails.push(...contacts.candidateIds);
+      const roster=contacts.results.map(r=>`${r.profile.displayName}${r.profile.nickname?` (${r.profile.nickname})`:''} — ${r.profile.email}`).join('\n');
+      answers.push(`เอกสารระบุ: ${e.quote}\n${e.team?'สมาชิกทีมสำหรับติดต่อ (เอกสารไม่ได้ระบุผู้รับผิดชอบรายบุคคล):':'ช่องทางติดต่อ:'}\n${roster}\nอ้างอิง: ${e.sourceUrl}`);
+    }
+    if(answers.length)return finish(answers.join('\n\n')+await freshnessNote(deps),new Set(matchedEmails).size);
+    return finish('ยังไม่พบข้อมูลที่ยืนยันว่าใครรับผิดชอบหรือมีประสบการณ์ตรงเรื่องนี้ครับ หากทราบชื่อคนหรือทีม ผมช่วยค้นข้อมูลและอีเมลงานจากทะเบียนได้',0,false,{errorStage:'NO_RESULT'});
+  }
   stages.retrievalMs = Date.now() - tRetrieval;
 
   if (response.noSupervisor) return finish(MSG.noSupervisor, 0, true, { errorStage: "NO_SUPERVISOR" });
@@ -237,8 +286,8 @@ export async function handlePeopleQuery(
   // The team term maps to more than one real team in the registry → ask which one.
   // Guessing here is how a confident wrong roster gets shipped (WP-05).
   if (response.needsClarification && response.clarifyOptions?.length) {
-    const opts = response.clarifyOptions.map((o) => `• ${o}`).join("\n");
-    const question = response.clarificationKind === 'person' ? 'หมายถึงบุคคลใดครับ? กรุณาระบุชื่อเต็มจากตัวเลือกเพื่อยืนยัน' : 'ตอนนี้ในทะเบียนมีมากกว่า 1 ทีมที่ตรงกับที่ถามครับ หมายถึงทีมไหนดีครับ 🙏';
+    const opts = response.clarifyOptions.map((o,i) => `${i+1}. ${o}`).join("\n");
+    const question = response.clarificationKind === 'person' ? 'หมายถึงบุคคลใดครับ? ระบุชื่อเต็ม สังกัด หรือหมายเลขจากตัวเลือกได้เลย' : 'พบมากกว่า 1 ทีมที่ตรงกับที่ถามครับ หมายถึงทีมใด';
     return finish(`${question}\n${opts}`, 0, true, {
       errorStage: "NEEDS_CLARIFICATION",
     });
@@ -247,20 +296,17 @@ export async function handlePeopleQuery(
   // A count question is answered from `totalMatches` with no rows and no LLM call,
   // so an empty `results` here is a real answer rather than a miss.
   if (response.totalMatches === 0) {
-    return finish(templateFallback([]), 0, true, { errorStage: "NO_RESULT", retrievalFallback: true });
+    const target=[intent.searchParams.personRef,intent.searchParams.team,intent.searchParams.bu].filter(Boolean).join(' / ');
+    return finish(target?`ยังไม่พบข้อมูลที่ตรงกับ ${target} ในทะเบียนครับ ลองระบุชื่อเต็มหรือ Org / Sub Org เพิ่มได้`:templateFallback([]), 0, true, { errorStage: "NO_RESULT", retrievalFallback: true });
   }
+  if ((ctx.offset??0)>0 && !response.results.length) return finish('แสดงสมาชิกที่ตรงกับเงื่อนไขครบแล้วครับ',response.totalMatches);
+  if(intent.subIntent==='CONTACT_HELP' && /ร่าง|draft/i.test(query) && response.results.length===1) return finish(`ร่างข้อความสำหรับตรวจและส่งเอง:\n${templateDraft(response.results[0]!,intent.searchParams.topic??'เรื่องงาน')}`,1);
 
   const knownNames = await deps.getKnownNames();
   const tResponder = Date.now();
   const composed = await compose({
     deterministic: deps.deterministicResponses,
-    requestedFields: [
-      ...(/ภาษาอังกฤษ|english|ชื่ออังกฤษ/i.test(query) ? ['fullNameEn'] : []),
-      ...(/อีเมล|email|e-mail/i.test(query) ? ['email'] : []),
-      ...(/ตำแหน่ง|position/i.test(query) ? ['position'] : []),
-      ...(/อยู่ทีมไหน|ทีมอะไร|พร้อมทีม|ระบุทีม/i.test(query) ? ['functionTeam'] : []),
-      ...(/วันเริ่มงาน|start date/i.test(query) ? ['startDate'] : []),
-    ],
+    requestedFields: intent.requestedFields ?? requestedPeopleFields(query),
     results: response.results,
     query,
     llm: deps.responderLlm,
@@ -276,7 +322,8 @@ export async function handlePeopleQuery(
 
   // Inferred (Org/Sub Org guess) → append the "confirm with HR" note.
   const base = response.inferred ? composed.text + MSG.confirmHr : composed.text;
-  const text = base + (await freshnessNote(deps));
+  const relation = intent.subIntent==='REPORTING_LINE' ? (intent.supervisorLevel===2?'หัวหน้าที่ดูแลภาพรวม (Supervisor 2)':'หัวหน้าโดยตรง (Supervisor 1)')+'\n' : '';
+  const text = relation + base + (await freshnessNote(deps));
   return finish(text, response.totalMatches, composed.usedFallback, {
     partialGroups: response.countGroups?.some(g => g.count === null),
     responderFallback: composed.usedFallback,
@@ -359,13 +406,14 @@ export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
       return r.text;
     };
 
-  const intentLlm = instrumented("people:intent", "people-intent", INTENT_SYSTEM_PROMPT, env.MODEL_PEOPLE_INTENT, 1000, 0);
+  const intentLlm = instrumented("people:intent", "people-intent-v2", INTENT_SYSTEM_PROMPT, env.MODEL_PEOPLE_INTENT, 2200, 0);
   // good Thai composing; only reached for answers that actually need phrasing —
   // counts and rosters are templated (WP-03).
   const responderLlm = instrumented("people:responder", "people-responder", RESPONDER_SYSTEM_PROMPT, env.MODEL_PEOPLE, 800, 0.3);
 
   return {
     intentLlm,
+    getContacts:loadContactEvidence,
     deterministicResponses: true,
     responderLlm,
     getDirectory: getActiveDirectory,

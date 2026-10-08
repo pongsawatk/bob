@@ -24,6 +24,13 @@ export interface PolicyDecision {
 
 const norm = (s: unknown): string => String(s ?? "").normalize("NFC").toLowerCase();
 
+/** A narrow contact-only request is about a service, not somebody's private record. */
+export function isServiceContactQuestion(query: string): boolean {
+  const q = norm(query).replace(/\s+/g,'').replace(/[?？]/g,'').replace(/(?:ครับ|ค่ะ|คะ)$/,'');
+  const topic='(?:เงินเดือน|สวัสดิการ|ประกันกลุ่ม|วันลา|ลาป่วย|ลาพักร้อน|payroll|vpn|netbird)';
+  return new RegExp(`^(?:ใคร(?:ดูแล|รับผิดชอบ)(?:เรื่อง)?${topic}|(?:เรื่อง)?${topic}(?:ต้อง)?ติดต่อใคร)(?:[,،]?ขอ(?:อีเมล|email)(?:ติดต่อ)?)?$`,'i').test(q);
+}
+
 export function evaluatePolicy(input: PolicyInput): PolicyDecision {
   const q = norm(input.queryText);
 
@@ -37,6 +44,7 @@ export function evaluatePolicy(input: PolicyInput): PolicyDecision {
 
   // 3) Blocked topics (salary/leave/health/eval/ranking/attrition/enumeration/private/field).
   for (const c of BLOCKED_CATEGORIES) {
+    if (['salary','leave','health'].includes(c.code) && isServiceContactQuestion(input.queryText)) continue;
     if (c.re.test(q)) return { outcome: "REFUSE", reason: `blocked:${c.code}` };
   }
 

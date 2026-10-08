@@ -25,11 +25,11 @@ export type LlmCall = (userContent: string) => Promise<string>;
 /** Thai first-person pronouns. Matched as plain substrings because Thai is written
  *  without spaces — "หัวหน้าฉัน" has no boundary before "ฉัน", and requiring one is why
  *  the obvious phrasing of the broadcast CTA read as "not self". */
-const SELF_TH_RE = /ฉัน|ผม|ดิฉัน|กระผม|หนู|เรา|ตัวเอง/;
+const SELF_TH_RE = /(?:หัวหน้า|ทีม|ข้อมูล|อีเมล|email|อายุงาน|ชื่อ|ตำแหน่ง|สังกัด)(?:ของ)?(?:ฉัน|ผม|ดิฉัน|เรา|ตัวเอง)|(?:ฉัน|ผม|ดิฉัน|หนู|เรา)(?:อยู่ทีม|อยู่แผนก|ทำงาน|เริ่มงาน|ชื่อ|มีอายุงาน)|ของ(?:ฉัน|ผม|ดิฉัน|เรา|ตัวเอง)/;
 
 /** English needs the opposite treatment: word boundaries, or "i" fires inside every
  *  other word. */
-const SELF_EN_RE = /(?:^|\W)(?:my|me|mine|myself|i|i'm|i am)(?:$|\W)/i;
+const SELF_EN_RE = /\bmy\s+(?:team|manager|supervisor|email|name|profile|tenure|department)|\b(?:who am i|what (?:team|department) am i in|how long have i|what is my|about me|i (?:work|started|joined))\b/i;
 
 /**
  * Does this message ask about the person sending it?
@@ -46,6 +46,7 @@ export function detectSelfReference(query: string, personRef?: string): boolean 
 /** Decide targetType from the query + extracted params. Code is the authority; an
  *  LLM-proposed value is only consulted for the TEAM/NAMED_PERSON distinction. */
 export function resolveTargetType(query: string, sp: SearchParams, proposed?: TargetType): TargetType {
+  if (!sp.personRef && (sp.team || sp.bu || sp.role) && !/(?:ทีม|แผนก|หัวหน้า)(?:ของ)?(?:ผม|ฉัน|เรา)|\bmy\s+(?:team|department|manager)\b/i.test(query)) return 'TEAM';
   if (detectSelfReference(query, sp.personRef)) return "SELF";
   if (sp.personRef?.trim()) return "NAMED_PERSON";
   if (sp.team?.trim() || sp.bu?.trim() || sp.role?.trim()) return "TEAM";
@@ -102,12 +103,29 @@ confidence: 0.0–1.0 ตามความมั่นใจ
 "ช่วยร่างข้อความทักคนที่ดูแล Pojjaman" → {"subIntent":"CONTACT_HELP","searchParams":{"topic":"Pojjaman"},"confidence":0.85}
 "ขอเฉพาะคนใน Contech" → {"subIntent":"FOLLOW_UP_FILTER","searchParams":{"bu":"Contech"},"confidence":0.8}
 "มีคนอื่นอีกไหม" → {"subIntent":"FOLLOW_UP_FILTER","searchParams":{},"confidence":0.75}
-"ผู้ดูแลคนนี้เปลี่ยนแล้ว" → {"subIntent":"CORRECTION","searchParams":{},"confidence":0.8}`;
+"ผู้ดูแลคนนี้เปลี่ยนแล้ว" → {"subIntent":"CORRECTION","searchParams":{},"confidence":0.8}
+
+กติกา People v2 (ใช้แทนข้อก่อนหน้าที่ขัดกัน):
+- Org/Sub Org คือสังกัดหลัก ใช้ dimension="primary" เป็นค่าเริ่มต้น. Group/Department/Function-Team เป็นคนละมิติ ใช้ dimension="group"|"department"|"team" เฉพาะเมื่อระบุชัด ห้ามนำสมาชิกคนละมิติมารวมกัน. dimension="org"|"subOrg" ใช้เมื่อระบุคอลัมน์นั้น.
+- TEAM_LIST = ขอชื่อทีม/แผนกที่มี เช่น "ขอชื่อทีมเป็น list" ไม่ใช่ขอสมาชิก จึงไม่ต้องให้ผู้ใช้ระบุชื่อทีมก่อน.
+- ขออีเมล/ช่องทางคนที่ทราบชื่อ ใช้ PERSON_LOOKUP; ขอสมาชิกทีมใช้งาน TEAM_ROSTER. CONTACT_HELP ใช้ร่างข้อความติดต่อเท่านั้น.
+- requestedFields เป็น array จาก displayName,fullNameEn,nickname,email,position,org,subOrg,group,department,functionTeam,supervisor,supervisor2,startDate,tenureYears,tenureMonths เท่านั้น. ขอเมลให้ใส่ email. ขอชื่ออังกฤษให้ใส่ fullNameEn. ขอทั้งจำนวนและรายชื่อ/email ให้ countOnly=false.
+- ถ้ามีหลายเป้าหมาย ให้เพิ่ม requests ไม่เกิน 4 รายการ โดยแต่ละรายการมี subIntent,searchParams,targetType,confidence และ optional fields เหมือนข้างต้น ห้ามซ้อน requests. ค่าที่ root ให้ตรงกับ request แรก ห้ามยัดคนละทีมเข้า searchParams.team เดียว.
+- "ขอ email HR และ IT(Kittisak)" → root TEAM_ROSTER team=HR requestedFields=["email"]; requests=[{"subIntent":"TEAM_ROSTER","searchParams":{"team":"HR"},"targetType":"TEAM","requestedFields":["email"],"confidence":0.95},{"subIntent":"PERSON_LOOKUP","searchParams":{"personRef":"Kittisak","team":"IT"},"targetType":"NAMED_PERSON","requestedFields":["email"],"confidence":0.95}]. ต้องรักษา IT เพื่อแยกคนชื่อซ้ำ.
+- searchParams.excludeTeam/excludeRole ใช้เฉพาะข้อยกเว้นที่ผู้ใช้ระบุ.
+- REPORTING_LINE ใช้ supervisorLevel=1 หัวหน้าโดยตรง หรือ 2 หัวหน้าที่ดูแลภาพรวม. Supervisor 2 ไม่ได้แปลว่ามีสิทธิ์อนุมัติทุกเรื่อง.
+- contactKind="shared" เฉพาะขออีเมลกลาง/ช่องทางกลางของแผนก ห้ามแทนด้วยอีเมลส่วนบุคคล.
+- คำว่า "email ของแผนก HR" ที่ไม่ระบุ "กลาง" ให้แสดงอีเมลสมาชิกทีมและบอกว่าเป็นสมาชิก ไม่แปลเป็น shared mailbox เอง.
+- followUp="fields" เพิ่มข้อมูลเดิม, "select" เลือกคน/ทีมจากตัวเลือก, "next" ดูต่อ, "filter" จำกัดผลเดิม, "replace" เปลี่ยนเป้าหมาย. หากเป็นเรื่องใหม่ไม่ต้องใส่ followUp. คำว่า "ผมอยากรู้ว่า HR มีกี่คน" ถามทีม HR ไม่ใช่ SELF.
+- PERSON_LOOKUP personRef อ้างชื่อในคำถามล่าสุดหรือเป้าหมายที่ยืนยันในบริบทได้ ห้ามนำชื่อที่ระบบเคยเดามาเป็นข้อเท็จจริง.
+- ห้ามสรุป owner/expert จากชื่อแผนกหรือตำแหน่ง. คำถามผู้อนุมัติไม่ใช่ REPORTING_LINE โดยอัตโนมัติ.
+- ถ้าถามรหัสพนักงาน/ข้อมูลนอกขอบเขต ให้คงเจตนาแต่ไม่สร้างฟิลด์ใหม่ ระบบจะบอกข้อจำกัด.
+`;
 
 const SCHEMA_HINT =
   'ตอบเป็น JSON เท่านั้น (ไม่มีข้อความอื่น): ' +
   '{"subIntent":"<หนึ่งใน sub-intent>","searchParams":{"topic"?,"team"?,"bu"?,"personRef"?,"role"?},' +
-  '"targetType":"SELF|NAMED_PERSON|TEAM|UNKNOWN","countOnly":true|false,"confidence":0.0-1.0}';
+  '"targetType":"SELF|NAMED_PERSON|TEAM|UNKNOWN","countOnly":true|false,"confidence":0.0-1.0}. รองรับ requestedFields,dimension,supervisorLevel,contactKind,followUp,requests ตามกติกา People v2';
 
 export interface ExtractOptions {
   /** recent turns for follow-up context (e.g. "มีคนอื่นอีกไหม"). */
@@ -133,7 +151,7 @@ export const FALLBACK_INTENT: Readonly<IntentResult> = Object.freeze({
   confidence: 0,
 });
 
-const ALLOWED_SP: (keyof SearchParams)[] = ["topic", "team", "bu", "personRef", "role"];
+const ALLOWED_SP: (keyof SearchParams)[] = ["topic", "team", "bu", "personRef", "role", "excludeTeam", "excludeRole"];
 
 /** Keep only allowed, non-empty string params — so an extra LLM key doesn't fail
  *  validation and force an unnecessary retry. */
@@ -153,6 +171,7 @@ function coerce(parsed: unknown): IntentResult | null {
   if (!parsed || typeof parsed !== "object") return null;
   const o = parsed as Record<string, unknown>;
   const candidate: IntentResult = {
+    ...Object.fromEntries(['requestedFields', 'dimension', 'supervisorLevel', 'contactKind', 'followUp', 'requests'].filter(k => o[k] !== undefined).map(k => [k, o[k]])),
     subIntent: o.subIntent as IntentResult["subIntent"],
     searchParams: normalizeSearchParams(o.searchParams),
     confidence: typeof o.confidence === "number" ? Math.max(0, Math.min(1, o.confidence)) : Number.NaN,

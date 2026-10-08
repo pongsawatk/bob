@@ -67,12 +67,12 @@ test("OWNER_LOOKUP with no match anywhere → not-found", async () => {
   assert.match(r.text, /ยังไม่พบ/); // "Pojjaman" not in the fixture's Org/Sub Org/position
 });
 
-test("OWNER_LOOKUP inferred from Org/Sub Org → served WITH confirm-HR note", async () => {
-  // topic matches department "Engineering" of both fixtures → inferred (no tags)
+test("OWNER_LOOKUP cannot establish responsibility from Org/Sub Org without evidence", async () => {
   const r = await handlePeopleQuery("ใครดูแล Engineering", deps(intent("OWNER_LOOKUP", { topic: "Engineering" })));
   assert.equal(r.outcome, "ALLOW");
-  assert.ok(r.resultCount > 0);
-  assert.match(r.text, /ยืนยันกับ HR/); // disclaimer appended
+  assert.equal(r.resultCount, 0);
+  assert.equal(r.errorStage,'NO_RESULT');
+  assert.match(r.text, /ยังไม่พบข้อมูลที่ยืนยัน/);
 });
 
 test("tag intent WITH tags → owner served", async () => {

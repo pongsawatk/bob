@@ -4,6 +4,7 @@ import { callDomainBot } from "./domainBot.js";
 import { runWithTrace, type LFTrace } from "../obs/langfuse.js";
 import type { LLMMessage } from "../llm/openrouter.js";
 import { handlePeopleQuery, defaultPeopleDeps } from "../people/connector.js";
+import { readPeopleConversation, writePeopleConversation, isPeopleFollowUp } from '../people/context/conversation.js';
 import type { RequesterIdentity } from "../people/identity.js";
 import { peopleEnabled } from "../channels/people.js";
 import { decideRoute } from './routePolicy.js';
@@ -133,6 +134,7 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
   precacheSpan.end({ hit: !!precacheHit, category: precacheHit?.category });
 
   if (precacheHit) {
+    if (peopleEnabled()) await writePeopleConversation(userId,sessionId);
     trace.update({
       output: precacheHit.answer,
       metadata: { ...baseMeta, category: precacheHit.category, fromCache: true, coldStart, latencyMs: Math.max(1, Date.now() - t0), answerStatus: 'answered' },
@@ -171,9 +173,15 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
     metadata: { confidence: routed.confidence },
   });
 
-  const decision = decideRoute(routed, message, history);
+  const peopleConversation = peopleEnabled() ? await readPeopleConversation(userId,sessionId) : undefined;
+  const decision = peopleEnabled() && isPeopleFollowUp(message,peopleConversation)
+    ? {category:'PEOPLE' as const,reason:'people_context',clarification:undefined}
+    : decideRoute(routed, message, history);
+  // The People handler owns person/team ambiguity and can offer real candidates.
+  if (peopleEnabled() && decision.category==='PEOPLE') decision.clarification=undefined;
   Object.assign(baseMeta, { originalCategory: routed.category, routeReason: decision.reason });
   routed.category = decision.category;
+  if (peopleConversation && routed.category!=='PEOPLE') await writePeopleConversation(userId,sessionId);
   if (decision.clarification) {
     const latencyMs = Math.max(1, Date.now() - t0);
     trace.update({ output: decision.clarification, metadata: { ...baseMeta, category: routed.category, latencyMs, answerStatus: 'clarification', outcomeSource: 'deterministic' }, tags: [channel, routed.category, 'clarification'] });
@@ -193,10 +201,12 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
     // made the only two-LLM-call category look like the cheapest one.
     const res = await handlePeopleQuery(message, defaultPeopleDeps((g) => trace.generation(g)), {
       requester,
+      conversation:peopleConversation,
       // Scoped to this conversation by the caller — the connector keeps no state, so
       // one conversation's context cannot reach another's.
       history: history.slice(-4).map((m) => ({ role: m.role, content: m.content })),
     });
+    await writePeopleConversation(userId,sessionId,res.conversation);
     peopleSpan.end({
       subIntent: res.subIntent,
       outcome: res.outcome,
@@ -214,6 +224,8 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
         subIntent: res.subIntent,
         policyOutcome: res.outcome,
         resultCount: res.resultCount,
+        requestCount: res.requestCount,
+        completedRequests: res.completedRequests,
         usedFallback: res.usedFallback,
         // Stage-specific degradation (WP-07): `usedFallback` alone couldn't say WHICH
         // stage gave up, so every no-result looked identical and none were actionable.

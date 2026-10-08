@@ -20,7 +20,7 @@ import { norm, type ProfileMap } from "../profileStore.js";
 
 /** Bump when a mapping changes, so a routing shift is traceable to a dictionary
  *  version rather than looking like model drift. */
-export const ALIAS_DICTIONARY_VERSION = "1";
+export const ALIAS_DICTIONARY_VERSION = "2";
 
 interface AliasEntry {
   /** what a user might type (normalized, leading "ทีม"/"team" already stripped). */
@@ -31,6 +31,9 @@ interface AliasEntry {
 }
 
 const ALIASES: AliasEntry[] = [
+  { forms: ['hr', 'human resource', 'human resources', 'บุคคล', 'ทรัพยากรบุคคล'], match: /^human resources?$|^hr$|บุคคล/ },
+  { forms: ['it', 'ไอที', 'it administration'], match: /^it$|^it administration$/ },
+  { forms: ['cs', 'cx', 'customer success'], match: /^cx$|^customer success$/ },
   // "บัญชี" is genuinely ambiguous wherever the registry carries both an accounting
   // team and a combined finance+accounting one — the matcher spans both on purpose so
   // the ambiguity surfaces and BOB asks instead of picking.
@@ -43,6 +46,42 @@ const ALIASES: AliasEntry[] = [
   { forms: ["pjm", "dev pjm", "pjm dev", "pojjaman", "พจมาน"], match: /pojjaman|pjm|พจมาน/ },
   { forms: ["คอนเทค", "contech", "con tech"], match: /contech|คอนเทค/ },
 ];
+
+export type GroupField = 'org' | 'subOrg' | 'group' | 'department' | 'team';
+export type TeamScope = { status: 'resolved'; canonical: string; fields: GroupField[] } | { status: 'ambiguous'; options: string[] } | { status: 'unknown' };
+/** Org/Sub Org is the default dimension. Other columns are never unioned into it. */
+export function resolveTeamScope(dir: ProfileMap, raw: string, dimension: 'primary' | GroupField = 'primary'): TeamScope {
+  const n = stripLead(norm(raw));
+  const fields: GroupField[] = dimension === 'primary' ? ['org', 'subOrg'] : [dimension];
+  const values = new Map<string, string>();
+  for (const p of Object.values(dir)) for (const f of fields) if (p[f]) values.set(norm(p[f]), p[f]!);
+  if (values.has(n)) return { status: 'resolved', canonical: values.get(n)!, fields };
+  const entry = ALIASES.find(a => a.forms.includes(n));
+  const matches = entry ? [...values].filter(([k]) => entry.match.test(k)).map(([,v]) => v) : [];
+  // IT and IT Administration often describe the same people. Collapse only proven identical sets.
+  const groups = new Map<string, string>();
+  for (const v of matches) {
+    const ids = Object.values(dir).filter(p => fields.some(f => norm(p[f]) === norm(v))).map(p => p.email).sort().join('|');
+    if (!groups.has(ids)) groups.set(ids, v);
+  }
+  const options = [...groups.values()];
+  if (options.length === 1) return { status: 'resolved', canonical: options[0]!, fields };
+  if (options.length > 1) return { status: 'ambiguous', options };
+  // Exact explicit secondary names remain usable, but do not mix matching dimensions.
+  if (dimension === 'primary') {
+    for (const f of ['department', 'team', 'group'] as const) {
+      const hit = Object.values(dir).find(p => norm(p[f]) === n);
+      if (hit) return { status: 'resolved', canonical: hit[f]!, fields: [f] };
+    }
+    // Compatibility for older snapshots containing only secondary columns.
+    if (!values.size) {
+      const legacy = resolveTeamAlias(dir, raw);
+      if (legacy.status === 'resolved') return { ...legacy, fields: ['department', 'team', 'group'] };
+      return legacy;
+    }
+  }
+  return { status: 'unknown' };
+}
 
 /** Drop a leading "ทีม"/"แผนก"/"team" so "ทีมบัญชี" and "บัญชี" resolve identically. Thai is
  *  unspaced, so this is a prefix strip rather than a word removal. */

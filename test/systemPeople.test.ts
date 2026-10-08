@@ -50,7 +50,7 @@ test('name typo produces suggestions only, never a guessed profile', () => {
   const r = retrieve({ intent: { subIntent: 'PERSON_LOOKUP', confidence: .9, searchParams: { personRef: 'สมชาย ทดสอป' } }, directory });
   assert.equal(r.needsClarification, true);
   assert.deepEqual(r.results, []);
-  assert.ok(r.clarifyOptions?.includes('สมชาย ทดสอบ'));
+  assert.ok(r.clarifyOptions?.some(option => option.startsWith('สมชาย ทดสอบ')));
 });
 test('group schema requires count intent and bounded filters; no unscoped enumeration', () => {
   assert.deepEqual(validateIntentResult(intent), []);

@@ -38,6 +38,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
   const history = req.body?.history;
+  if (req.body?.sessionId !== undefined && (typeof req.body.sessionId !== 'string' || req.body.sessionId.length>150)) {
+    res.status(400).json({error:'Invalid test sessionId'});return;
+  }
   if (req.body?.experimentArm !== undefined && !isExperimentArm(req.body.experimentArm)) {
     res.status(400).json({ error: 'Invalid experiment arm' }); return;
   }
@@ -63,6 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       userName: userName ?? "Tester",
       department: department ?? "",
       history,
+      sessionId:req.body.sessionId ? `test:${req.body.sessionId}` : undefined,
       experimentArm: req.body.experimentArm,
       queueEvaluation: req.body.queueEvaluation === true,
     });

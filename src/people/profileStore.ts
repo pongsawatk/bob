@@ -80,9 +80,9 @@ export type SupervisorResolution =
  *  email or a full name. Resolve by email first, then by exact-normalized name.
  *  Never guesses: 0 or >1 name matches → `unresolved`; a self-reference is also
  *  treated as `unresolved` (broken cell, not a real report line). */
-export function findSupervisor(map: ProfileMap, email: string): SupervisorResolution {
+export function findSupervisor(map: ProfileMap, email: string, level: 1 | 2 = 1): SupervisorResolution {
   const p = map[String(email).toLowerCase()];
-  const raw = (p?.supervisor ?? "").trim();
+  const raw = (level === 2 ? p?.supervisor2 : p?.supervisor)?.trim() ?? "";
   if (!raw) return { status: "none" };
 
   const byEmail = map[raw.toLowerCase()];

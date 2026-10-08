@@ -10,6 +10,7 @@ import { refreshKB } from "../kb/index.js";
 import { lookupProfile, renderProfileBlock, refreshDirectory } from "../people/directory.js";
 import { scoreTrace } from "../obs/langfuse.js";
 import { getHistory, appendHistory, clearHistory, historyEpoch } from "./history.js";
+import { writePeopleConversation } from '../people/context/conversation.js';
 import { withConversationTurn } from './turns.js';
 import { saveConvRef } from "./convref.js";
 import { getRedis } from "../store/redis.js";
@@ -324,6 +325,9 @@ export async function handleTeamsRequest(
     if (isClearCommand(message)) {
       const convId = activity.conversation?.id ?? activity.from.aadObjectId ?? activity.from.id ?? "unknown";
       await clearHistory(convId);
+      const clearAad = activity.from.aadObjectId ?? activity.from.id ?? 'unknown';
+      const clearEmail = await resolveEmail(ctx,clearAad).catch(()=> '');
+      await Promise.all([writePeopleConversation(clearAad,convId), ...(clearEmail?[writePeopleConversation(clearEmail,convId)]:[])]);
       await ctx.sendActivity("ล้างความจำเรียบร้อยครับ เริ่มต้นบทสนทนาใหม่ได้เลย 🧹");
       return;
     }
