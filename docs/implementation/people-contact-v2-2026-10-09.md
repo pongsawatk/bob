@@ -60,5 +60,6 @@
 - Refresh snapshot จาก Excel ต้นทางเพื่อให้ schema 3 มี Supervisor 2 โดยไม่แก้ workbook
 - ย้อน code ด้วย Vercel deployment เดิมได้; snapshot เพิ่มฟิลด์แบบ optional จึงยังอ่านกับรุ่นก่อนหน้าได้; prompt เดิมไม่ถูกเปลี่ยนใน Langfuse
 - ทดสอบผ่าน API ที่ต้องมี test key; ไม่มีการส่งข้อความ Teams ให้พนักงานหรือแก้เอกสาร HR/IT/Product
+- การปล่อยรอบแรกพบ JSON import ไม่ระบุ type ทำให้ native Node บน Vercel เริ่ม API ไม่ได้ จึงคืน traffic ไป deployment เดิม แก้ import และเพิ่มการเปิด compiled API ด้วย native Node ในขั้น build เพื่อจับปัญหานี้ก่อนปล่อย
 
 หลักฐานการทดสอบเก็บใน `test-results/people-v2-*` ซึ่งไม่เข้า Git และไม่เผยแพร่ข้อมูลพนักงานในรายงานนี้

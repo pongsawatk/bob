@@ -1,4 +1,4 @@
-import registry from './registry.json';
+import registry from './registry.json' with { type: 'json' };
 import { getHRBundle, getProductBundle } from '../../kb/index.js';
 import { getITBundle } from '../../kb/it.js';
 import type { ProfileMap } from '../profileStore.js';
