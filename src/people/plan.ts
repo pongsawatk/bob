@@ -4,6 +4,7 @@ import { extractIntent } from './intent/extract.js';
 import { isPeopleFollowUp, type PeopleConversation } from './context/conversation.js';
 import { norm } from './profileStore.js';
 import { evaluatePolicy } from './policy/gate.js';
+import { explicitColumnScope } from './retrieval/aliases.js';
 
 export function requestedPeopleFields(query: string): string[] {
   return [
@@ -61,6 +62,10 @@ export async function runPeoplePlan(query: string, deps: PeopleDeps, ctx: People
       }
       if (/ภาพรวม|supervisor\s*2/i.test(query) && base.searchParams.personRef) intent={...intent,subIntent:'REPORTING_LINE',supervisorLevel:2,searchParams:{personRef:base.searchParams.personRef}};
     }
+  }
+  if(!intent.requests && /\b(?:department|org|group|function)\b/i.test(query)) {
+    const explicit=explicitColumnScope(query,await deps.getDirectory());
+    if(explicit)intent={...intent,dimension:explicit.dimension,searchParams:{...intent.searchParams,team:explicit.value,bu:undefined}};
   }
   const requests = (intent.requests ?? [intent]).map(r=>({ ...r, requests:undefined,
     contactKind: /อีเมลกลาง|email\s*กลาง|เมลกลาง|เมล์กลาง|ช่องทางกลาง|shared\s*(?:mailbox|email)|group\s*email/i.test(query) ? r.contactKind : 'person' as const,

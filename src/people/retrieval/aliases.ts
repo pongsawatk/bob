@@ -48,6 +48,18 @@ const ALIASES: AliasEntry[] = [
 ];
 
 export type GroupField = 'org' | 'subOrg' | 'group' | 'department' | 'team';
+/** Honor a literal column + live value before accepting an LLM's split of that phrase. */
+export function explicitColumnScope(query: string, dir: ProfileMap): { dimension: GroupField; value: string } | undefined {
+  const markers=[...query.matchAll(/\b(corporate\s+department|department|function\s*\/\s*team|sub\s*org|org|group)\b/gi)];
+  if(markers.length!==1)return;
+  const marker=markers[0]!;
+  const key=norm(marker[1]).replace(/\s+/g,'');
+  const dimension:GroupField=key.includes('department')?'department':key==='suborg'?'subOrg':key==='function/team'?'team':key==='group'?'group':'org';
+  const tail=norm(query.slice(marker.index!+marker[0].length)).replace(/^[\s:="'(]+/,'');
+  const values=[...new Set(Object.values(dir).map(p=>p[dimension]).filter((v):v is string=>!!v))];
+  const hits=values.filter(v=>tail.startsWith(norm(v)) && /^(?:$|\s|[?.,)"']|มี|กี่|ขอ|คือ|ครับ|ค่ะ)/.test(tail.slice(norm(v).length))).sort((a,b)=>b.length-a.length);
+  if(hits[0])return{dimension,value:hits[0]};
+}
 export type TeamScope = { status: 'resolved'; canonical: string; fields: GroupField[] } | { status: 'ambiguous'; options: string[] } | { status: 'unknown' };
 /** Org/Sub Org is the default dimension. Other columns are never unioned into it. */
 export function resolveTeamScope(dir: ProfileMap, raw: string, dimension: 'primary' | GroupField = 'primary'): TeamScope {

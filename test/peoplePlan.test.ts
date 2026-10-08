@@ -124,3 +124,10 @@ test('payroll contact can use an explicit KB reference without claiming a person
  const r=await handlePeopleQuery('ใครดูแล payroll',d,{});
  assert.equal(r.errorStage,undefined);assert.match(r.text,/hr@example.test/);assert.match(r.text,/เอกสารไม่ได้ระบุผู้รับผิดชอบรายบุคคล/);
 });
+test('literal Corporate Department is checked against live values when model splits the column name',async()=>{
+ const r=await run('เฉพาะ Corporate Department ConTech มีกี่คน',{...roster('Corporate'),searchParams:{team:'Corporate',bu:'ConTech'},countOnly:true});
+ assert.equal(r.resultCount,2);assert.equal(r.errorStage,undefined);assert.match(r.text,/department ConTech/);
+ const {explicitColumnScope}=await import('../src/people/retrieval/aliases.ts');
+ assert.equal(explicitColumnScope('Department ConTechExtended มีกี่คน',directory),undefined);
+ assert.equal(explicitColumnScope('Org Contech และ Department ConTech',directory),undefined);
+});

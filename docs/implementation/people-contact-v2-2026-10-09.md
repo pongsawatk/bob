@@ -41,7 +41,7 @@
 
 ## การตรวจสอบก่อนปล่อย
 
-- Automated tests 355/355 ผ่าน; TypeScript check และ build ผ่าน
+- Automated tests 356/356 ผ่าน; TypeScript check, build และ native Node API import ผ่าน
 - ตรวจทะเบียนจริงในเครื่องโดยไม่เรียก Model: พนักงาน 138 คน, HR 2, Org Contech 10, Department ConTech 9
 - Excel มี Supervisor 2 จำนวน 22 รายการ เชื่อมกับคนในทะเบียนได้ครบ 22 รายการ
 - ทดสอบ Model ด้วยบุคคลสมมติเท่านั้น 16 กรณีต่อ Model:
@@ -61,5 +61,6 @@
 - ย้อน code ด้วย Vercel deployment เดิมได้; snapshot เพิ่มฟิลด์แบบ optional จึงยังอ่านกับรุ่นก่อนหน้าได้; prompt เดิมไม่ถูกเปลี่ยนใน Langfuse
 - ทดสอบผ่าน API ที่ต้องมี test key; ไม่มีการส่งข้อความ Teams ให้พนักงานหรือแก้เอกสาร HR/IT/Product
 - การปล่อยรอบแรกพบ JSON import ไม่ระบุ type ทำให้ native Node บน Vercel เริ่ม API ไม่ได้ จึงคืน traffic ไป deployment เดิม แก้ import และเพิ่มการเปิด compiled API ด้วย native Node ในขั้น build เพื่อจับปัญหานี้ก่อนปล่อย
+- Staged API test พบ Model แยกคำว่า Corporate Department ผิด จึงเพิ่มการตรวจชื่อคอลัมน์และค่าที่ระบุชัดกับทะเบียนจริง โดยไม่รวมสมาชิกข้ามมิติ
 
 หลักฐานการทดสอบเก็บใน `test-results/people-v2-*` ซึ่งไม่เข้า Git และไม่เผยแพร่ข้อมูลพนักงานในรายงานนี้
