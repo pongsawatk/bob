@@ -8,6 +8,7 @@ const { withModelExperiment, callDomainLLM } = await import('../src/llm/experime
 const { DEFAULT_EVALUATION_CONFIG, validateConfig, pilotArm, sampled } = await import('../src/evaluation/config.js');
 const { reviewWithJev, redactReviewText } = await import('../src/evaluation/jev.js');
 const { selectDocs } = await import('../src/kb/select.js');
+const { answerQuery } = await import('../src/kb/query.js');
 const { appendHistory, getHistory, clearHistory, historyEpoch } = await import('../src/channels/history.js');
 const { withConversationTurn } = await import('../src/channels/turns.js');
 
@@ -49,6 +50,13 @@ test('maternity query retrieves leave chapter and follows annual-leave cross-ref
   const b = [doc('หมวด 7 การลา', 'ลาคลอด ลาป่วย ดูหมวด 4 สำหรับพักผ่อน'), doc('หมวด 4 เวลาทำงาน', 'เงื่อนไขพักผ่อนประจำปี'), ...Array.from({length:8},(_,i)=>doc(`กิจกรรม ${i}`, 'กิจกรรม '.repeat(600)))].join('\n\n---\n\n');
   const r = selectDocs('ลาคลอดได้อย่างไร', b);
   assert.match(r.bundle, /หมวด 7/); assert.match(r.bundle, /หมวด 4/); assert.ok(r.chars < b.length);
+});
+test('IT follow-up separates the current Mac task from prior VPN context and excludes assistant claims', () => {
+  const q = answerQuery('แล้วบน Mac ทำอย่างไร', [{ role: 'user', content: 'ขอวิธีตั้งค่า VPN Netbird' }, { role: 'assistant', content: 'invented OS steps' }]);
+  assert.match(q, /บริบทหัวข้อ.*\nขอวิธีตั้งค่า vpn netbird/);
+  assert.match(q, /คำถามล่าสุดที่ต้องตอบเท่านั้น:\nแล้วบน Mac ทำอย่างไร$/);
+  assert.doesNotMatch(q, /invented/);
+  assert.equal(answerQuery('ขอคู่มือ Docker', [{ role: 'user', content: 'VPN' }]), 'ขอคู่มือ Docker');
 });
 test('Jev skips oversized input, validates typed answers and preserves uncertainty', async t => {
   let calls = 0;

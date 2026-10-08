@@ -9,7 +9,7 @@ import { guardEligibility } from '../prompts/systemPolicy.js';
 import { timesheetEditGap } from '../kb/taskEvidence.js';
 import { getITBundle, IT_COLLECTION_ID } from '../kb/it.js';
 import { validateITAnswer, IT_UNAVAILABLE } from '../kb/itAnswer.js';
-import { retrievalQuery } from '../kb/query.js';
+import { answerQuery } from '../kb/query.js';
 import { modelSettings } from '../llm/modelConfig.js';
 import { callDomainLLM } from '../llm/experimentContext.js';
 import { renderPrompt } from '../prompts/render.js';
@@ -129,7 +129,7 @@ export async function callDomainBot(
       ...modelSettings('IT'),
       systemPrompt: renderPrompt(template, { KB_BUNDLE: kbSelect.bundle, CURRENT_DATE: currentDateTH() }),
       // Only user topic context survives. Old assistant answers cannot become IT evidence.
-      messages: [{ role: 'user', content: retrievalQuery(message, history) }],
+      messages: [{ role: 'user', content: answerQuery(message, history) }],
       cacheSystem: env.MODEL_IT.startsWith('anthropic/'),
     }, promptVersion, kbSelect);
     const checked = validateITAnswer(result.text, kbSelect);

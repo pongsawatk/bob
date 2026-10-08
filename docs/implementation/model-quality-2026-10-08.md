@@ -46,6 +46,14 @@ Kill switch: set configuration mode to off. Queued workers recheck it before inf
 - Agent review found maternity and annual-leave evidence available, but uneven answer quality remains: Sonnet 5 still used an overconfident sick-pay example before its caveat; Haiku's sick-leave wording can confuse leave entitlement with paid days. Sonnet 5.5 adds some unnecessary related details, and the Mac VPN follow-up repeats Windows steps before explaining the evidence gap. These findings support keeping the primary and collecting shadow comparisons, not declaring a model winner.
 - Required release checks: verify the new Git SHA is READY and aliased, promote/read back HR v4, activate/read back shadow mode, exercise the signed queue, confirm primary vs candidate separation and budget counters, and inspect production errors. Record actual results in the local release report.
 
+## Production verification and follow-up correction
+
+The first deployment (669e79b) served all eight authenticated HR/IT test requests without runtime errors or output truncation. HR used Sonnet 5 with prompt v4. Five Sonnet 5.5 queue comparisons completed; two were conservatively skipped while other $1 reservations were outstanding. This is a reservation limit, not $2 of actual spend. Redis append/reset/deduplication also passed with isolated live test keys, which were removed afterwards. The follow-up correction passes 336 local tests.
+
+Answer inspection found a real Mac VPN error: the answering model treated the previous VPN question and current Mac follow-up as two current tasks. It repeated Windows instructions and inferred cross-platform support. The correction explicitly separates prior topic context from the latest question and requires platform-specific evidence. Both Sonnet 5 and 5.5 then returned the documented information gap in a live-KB replay; the ordinary VPN question still returned its documented steps. Policy version is `2026-10-08.quality2`.
+
+Long HR/IT evidence exceeded Jev's conservative size bound, so those reviews were not_assessed. A separately labelled synthetic small-context job completed through the deployed queue: Jev returned supported/complete/relevant in 152 ms, reported cost $0.000044394. This verifies the path, not accuracy on real HR/IT questions. Sick-pay answers still merit human review for how clearly assumptions precede numerical examples. No automatic model promotion or correctness score is inferred from these tests.
+
 ## Commands
 
 - `npm test`, `npm run typecheck`, `npm run build`

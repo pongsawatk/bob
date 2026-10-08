@@ -28,6 +28,16 @@ export function retrievalQuery(question: string, history: readonly QueryTurn[] =
   return q;
 }
 
+/** Keep retrieval context distinct from the current task. Otherwise a follow-up
+ * such as "on Mac?" looks like two equally current requests to the answerer. */
+export function answerQuery(question: string, history: readonly QueryTurn[] = []): string {
+  const q = canonicalQuery(question);
+  const contextual = retrievalQuery(question, history);
+  if (contextual === q) return question;
+  const prior = contextual.slice(0, -q.length).trim();
+  return `บริบทหัวข้อจากคำถามก่อนหน้า (ใช้ระบุหัวข้อ ไม่ต้องตอบคำถามเดิมซ้ำ):\n${prior}\n\nคำถามล่าสุดที่ต้องตอบเท่านั้น:\n${question}`;
+}
+
 export function queryConcepts(text: string): string[] {
   const q = canonicalQuery(text);
   const concepts: [string, RegExp][] = [
