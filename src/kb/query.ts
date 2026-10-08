@@ -17,7 +17,7 @@ const FOLLOW_UP = /^(?:ขอ|แล้ว|ทำ|ถ้า|บน|macos|windows
 export function retrievalQuery(question: string, history: readonly QueryTurn[] = []): string {
   const q = canonicalQuery(question);
   const systemAnswer = /^(?:ระบบ\s*)?(?:pojjaman|humansoft)(?:\s*(?:ครับ|ค่ะ|คะ))?$/i.test(q.trim());
-  if ((!systemAnswer && HAS_TOPIC.test(q)) || q.length > 100 || !FOLLOW_UP.test(q.trim())) return q;
+  if ((!systemAnswer && (HAS_TOPIC.test(q) || queryConcepts(q).length > 0)) || q.length > 100 || !FOLLOW_UP.test(q.trim())) return q;
   const previous = history.filter(m => m.role === 'user').slice(-4).map(m => canonicalQuery(m.content));
   const qualifiers: string[] = [];
   for (const t of previous.reverse()) {
@@ -31,7 +31,9 @@ export function retrievalQuery(question: string, history: readonly QueryTurn[] =
 export function queryConcepts(text: string): string[] {
   const q = canonicalQuery(text);
   const concepts: [string, RegExp][] = [
-    ['timesheet', /timesheet/], ['leave', /วันลา|การลา|ลาป่วย|ลากิจ|ลาพัก|พักร้อน|\bleave\b/],
+    ['timesheet', /timesheet/], ['leave', /วันลา|การลา|ลา(?:อะไร|แบบไหน|ได้)|ลาป่วย|ลากิจ|ลาพัก|พักร้อน|พักผ่อน|ลาคลอด|คลอดบุตร|ลาบวช|ลาอุปสมบท|ลาเกณฑ์ทหาร|ลาอบรม|\bleave\b|maternity|vacation/],
+    ['maternity', /ลาคลอด|คลอดบุตร|maternity/], ['annual_leave', /พักร้อน|พักผ่อน|annual leave|vacation/],
+    ['sick_leave', /ลาป่วย|sick leave/], ['personal_leave', /ลากิจ|personal leave/],
     ['holiday', /วันหยุด|\bholidays?\b/], ['address', /ที่อยู่|เดินทางมาออฟฟิศ|\baddress\b/],
     ['provident', /กองทุน|provident/], ['travel', /ค่าเดินทาง|ค่าน้ำมัน/],
   ];

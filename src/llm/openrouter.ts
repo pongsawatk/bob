@@ -1,5 +1,6 @@
 import { env } from "../env.js";
 import { fetchRetry } from "../http/fetchRetry.js";
+import { acceptsTemperature, type Effort } from './modelConfig.js';
 
 export interface LLMMessage {
   role: "user" | "assistant";
@@ -12,6 +13,13 @@ export interface LLMCallOptions {
   messages: LLMMessage[];
   maxTokens?: number;
   temperature?: number;
+  effort?: Effort;
+  /** Evaluation fixes providers and forbids unnoticed provider fallbacks. */
+  providers?: string[];
+  strictProvider?: boolean;
+  maxPrice?: { prompt: number; completion: number };
+  timeoutMs?: number;
+  retries?: number;
   /** แนบ cache_control: ephemeral บน system prompt (ใช้กับ Anthropic models) */
   cacheSystem?: boolean;
   /**
@@ -29,52 +37,46 @@ export interface LLMResult {
     outputTokens: number;
     cacheReadTokens: number;
     cacheWriteTokens: number;
+    reasoningTokens?: number;
   };
-  /** Actual cost in USD as billed by OpenRouter (0 if not reported). */
-  costUsd: number;
+  /** Null means the provider did not report billing; never treat it as free. */
+  costUsd: number | null;
   latencyMs: number;
+  requestedModel?: string;
+  actualModel?: string;
+  provider?: string;
+  responseId?: string;
+  requestedEffort?: Effort;
+  effectiveEffort?: string;
+  finishReason?: string;
+  fallbackFrom?: string;
+  promptHash?: string;
+  kbHash?: string;
+}
+
+export function buildLLMBody(opts: LLMCallOptions) {
+  const { model, systemPrompt, messages, maxTokens = 1000, cacheSystem = false, userContext } = opts;
+  const systemContent = cacheSystem && model.startsWith('anthropic/')
+    ? [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral', ttl: '1h' } },
+      ...(userContext ? [{ type: 'text', text: userContext }] : [])]
+    : [systemPrompt, userContext].filter(Boolean).join('\n\n');
+  return {
+    model, max_tokens: maxTokens, usage: { include: true },
+    ...(acceptsTemperature(model) && opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    ...(opts.effort ? { reasoning: { effort: opts.effort, exclude: true } } : {}),
+    ...(opts.effort || opts.providers || opts.strictProvider || opts.maxPrice ? { provider: {
+      require_parameters: true,
+      ...(opts.providers?.length ? { only: opts.providers } : {}),
+      ...(opts.strictProvider ? { allow_fallbacks: false } : {}),
+      ...(opts.maxPrice ? { max_price: opts.maxPrice } : {}),
+    } } : {}),
+    messages: [{ role: 'system', content: systemContent as unknown }, ...messages],
+  };
 }
 
 export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
-  const {
-    model,
-    systemPrompt,
-    messages,
-    maxTokens = 1000,
-    temperature = 0.3,
-    cacheSystem = false,
-    userContext,
-  } = opts;
-
-  // For Anthropic models, cache the (large, stable) system prompt by sending it as a
-  // content-block array with cache_control:ephemeral — OpenRouter passes this through
-  // to Anthropic. Cached input tokens are billed at 0.1x read. For non-Anthropic models
-  // (Gemini) we send a plain string. We request the 1-hour TTL (ttl:"1h") instead of the
-  // default 5 min: at our sparse traffic (~13 turns/day, spread out) the 5-min window
-  // expires between turns, so most calls missed the cache and paid full input (HR bundle
-  // ~38K tok). 1h write costs 2x (vs 1.25x) but converts those misses into reads, which
-  // dominates the cost given HR = ~75% of spend. The date in the prompt is stable within
-  // an hour; HR (no per-user data) is shared across users, Product across follow-ups.
-  const systemContent = cacheSystem
-    ? [
-        { type: "text", text: systemPrompt, cache_control: { type: "ephemeral", ttl: "1h" } },
-        // Per-user block: uncached tail (~100 tok) — the big KB prefix above
-        // still shares its cache across all users.
-        ...(userContext ? [{ type: "text", text: userContext }] : []),
-      ]
-    : [systemPrompt, userContext].filter(Boolean).join("\n\n");
-
-  const body = {
-    model,
-    max_tokens: maxTokens,
-    temperature,
-    // Ask OpenRouter to report the actual cost (credits) it charged for this call.
-    usage: { include: true },
-    messages: [
-      { role: "system", content: systemContent as unknown },
-      ...messages.map((m) => ({ role: m.role, content: m.content as unknown })),
-    ],
-  };
+  const { model } = opts;
+  const body = buildLLMBody(opts);
 
   const t0 = Date.now();
   // 50s per-attempt timeout (normal answers are 5-20s; below Vercel's 60s limit).
@@ -90,16 +92,19 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
       },
       body: JSON.stringify(body),
     },
-    { retries: 2, timeoutMs: 50_000 }
+    { retries: opts.retries ?? 2, timeoutMs: opts.timeoutMs ?? 50_000 }
   );
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`OpenRouter HTTP ${res.status}: ${text.slice(0, 300)}`);
+    // Provider errors can echo request content. Keep logs free of that content.
+    throw new Error(`OpenRouter HTTP ${res.status} (model ${model})`);
   }
 
   const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    id?: string;
+    model?: string;
+    provider?: string;
+    choices?: Array<{ finish_reason?: string; message?: { content?: string } }>;
     usage?: {
       prompt_tokens?: number;
       completion_tokens?: number;
@@ -107,6 +112,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
       cost?: number;
+      completion_tokens_details?: { reasoning_tokens?: number };
     };
   };
   // Measure AFTER res.json(): fetch() resolves `res` when response *headers*
@@ -125,12 +131,21 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
   return {
     text,
     latencyMs,
-    costUsd: u.cost ?? 0,
+    costUsd: typeof u.cost === 'number' && Number.isFinite(u.cost) ? u.cost : null,
+    requestedModel: model,
+    actualModel: json.model,
+    provider: json.provider,
+    responseId: json.id,
+    requestedEffort: opts.effort,
+    // The gateway does not echo effective effort; requested is not proof of it.
+    effectiveEffort: 'unknown',
+    finishReason: json.choices?.[0]?.finish_reason ?? 'unknown',
     usage: {
       inputTokens: u.prompt_tokens ?? 0,
       outputTokens: u.completion_tokens ?? 0,
       cacheReadTokens: u.cache_read_input_tokens ?? details.cached_tokens ?? 0,
       cacheWriteTokens: u.cache_creation_input_tokens ?? details.cache_write_tokens ?? 0,
+      reasoningTokens: u.completion_tokens_details?.reasoning_tokens,
     },
   };
 }

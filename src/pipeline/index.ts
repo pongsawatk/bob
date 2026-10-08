@@ -11,6 +11,10 @@ import { SYSTEM_POLICY_VERSION } from '../prompts/systemPolicy.js';
 import { domainOutcome, peopleOutcome } from './outcome.js';
 import { withBudget, BudgetExceededError, requestBudget } from '../http/budget.js';
 import { deliverAnswer } from './delivery.js';
+import { getEvaluationConfig, pilotArm, DEFAULT_EVALUATION_CONFIG } from '../evaluation/config.js';
+import { enqueueEvaluation } from '../evaluation/jobs.js';
+import { withModelExperiment, type ModelExperimentContext, type EvaluationSnapshot } from '../llm/experimentContext.js';
+import { MODEL_CONFIG_VERSION, type ExperimentArm } from '../llm/modelConfig.js';
 
 export type { LLMMessage };
 
@@ -37,9 +41,20 @@ export interface PipelineInput {
   requester?: RequesterIdentity;
   /** Absolute deadline shared with Teams preparation; default 45s from entry. */
   deadlineMs?: number;
+  /** Authenticated replay only; Teams never accepts an arm from message text. */
+  experimentArm?: ExperimentArm;
+  captureSnapshot?: (snapshot: EvaluationSnapshot) => void;
+  queueEvaluation?: boolean;
 }
 
 export interface PipelineOutput {
+  model?: string;
+  requestedEffort?: string;
+  promptVersion?: string;
+  finishReason?: string;
+  costUsd?: number | null;
+  evaluationJobId?: string;
+  deliveryCancelled?: boolean;
   errorStage?: 'TIMEOUT' | 'PIPELINE';
   traceId: string;
   category: Category;
@@ -62,8 +77,15 @@ let instanceWarmed = false;
 export async function runPipeline(input: PipelineInput, deliver?: (output: PipelineOutput) => Promise<unknown>): Promise<PipelineOutput> {
   const { message, userId, channel = "teams", sessionId } = input;
   return runWithTrace({ userId, sessionId, channel, input: message }, async (trace) => {
-    const output = await runBoundedPipeline(input, trace);
-    if (deliver) await deliverAnswer(trace, () => deliver(output));
+    const config = await withBudget(1000, getEvaluationConfig).catch(() => DEFAULT_EVALUATION_CONFIG);
+    const scope: ModelExperimentContext = { arm: input.experimentArm ?? pilotArm(config, userId), allowFallback: channel === 'teams' };
+    const output = await withModelExperiment(scope, () => runBoundedPipeline(input, trace));
+    if (scope.snapshot) input.captureSnapshot?.(scope.snapshot);
+    if (deliver && !await deliverAnswer(trace, () => deliver(output))) { output.deliveryCancelled = true; return output; }
+    if (scope.snapshot && !output.errorStage && (channel === 'teams' || input.queueEvaluation)) {
+      scope.snapshot.servedAnswer = output.answer;
+      output.evaluationJobId = await withBudget(2000, () => enqueueEvaluation(scope.snapshot!, trace.traceId, config)).catch(() => undefined);
+    }
     return output;
   });
 }
@@ -244,7 +266,13 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
       total: botResult.usage.inputTokens + botResult.usage.outputTokens,
       totalCost: botResult.costUsd,
     },
-    metadata: { cacheReadTokens: botResult.usage.cacheReadTokens, kbSelect: botResult.kbSelect, systemPolicyVersion: SYSTEM_POLICY_VERSION },
+    metadata: { cacheReadTokens: botResult.usage.cacheReadTokens, cacheWriteTokens: botResult.usage.cacheWriteTokens,
+      reasoningTokens: botResult.usage.reasoningTokens, requestedModel: botResult.requestedModel,
+      actualModel: botResult.actualModel, provider: botResult.provider, responseId: botResult.responseId,
+      requestedEffort: botResult.requestedEffort, effectiveEffort: botResult.effectiveEffort,
+      finishReason: botResult.finishReason, costReported: botResult.costUsd !== null,
+      fallbackFrom: botResult.fallbackFrom, promptHash: botResult.promptHash, kbHash: botResult.kbHash,
+      modelConfigVersion: MODEL_CONFIG_VERSION, sources: botResult.kbSelect?.sources, systemPolicyVersion: SYSTEM_POLICY_VERSION },
   });
 
   const totalMs = Date.now() - t0;
@@ -264,13 +292,15 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
     domainLlmMs: botResult.latencyMs,
   };
 
+  const answer = botResult.finishReason === 'length' ? `${botResult.text}\n\nคำตอบนี้ยังไม่ครบเพราะถึงขีดจำกัดความยาวครับ กรุณาระบุหัวข้อที่ต้องการรายละเอียดเพิ่ม` : botResult.text;
   trace.update({
-    output: botResult.text,
+    output: answer,
     metadata: {
       ...baseMeta,
       category: routed.category,
       confidence: routed.confidence,
       ...domainOutcome(botResult.text, routed.category),
+      ...(botResult.finishReason === 'length' ? { answerStatus: 'partial', outcomeSource: 'finish_reason', reviewRequired: true } : {}),
       ...(botResult.evidenceGap ? { answerStatus: 'partial', outcomeSource: 'deterministic', evidenceGap: botResult.evidenceGap, reviewRequired: true } : {}),
       eligibilityGuarded: botResult.eligibilityGuarded ?? false,
       itCollectionId: botResult.itCollectionId,
@@ -281,6 +311,11 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
       inputTokens: botResult.usage.inputTokens,
       outputTokens: botResult.usage.outputTokens,
       cacheReadTokens: botResult.usage.cacheReadTokens,
+      cacheWriteTokens: botResult.usage.cacheWriteTokens,
+      reasoningTokens: botResult.usage.reasoningTokens,
+      requestedModel: botResult.requestedModel, actualModel: botResult.actualModel,
+      requestedEffort: botResult.requestedEffort, effectiveEffort: botResult.effectiveEffort,
+      finishReason: botResult.finishReason, provider: botResult.provider,
       kbSelect: botResult.kbSelect && {
         mode: botResult.kbSelect.mode,
         docs: `${botResult.kbSelect.selected}/${botResult.kbSelect.total}`,
@@ -297,7 +332,10 @@ export async function runPipelineTraced(input: PipelineInput, trace: LFTrace, de
   return {
     traceId,
     category: routed.category,
-    answer: botResult.text,
+    answer,
+    model: botResult.model, requestedEffort: botResult.requestedEffort, promptVersion: botResult.promptVersion,
+    finishReason: botResult.finishReason,
+    costUsd: botResult.costUsd !== null && routed.costUsd !== null ? botResult.costUsd + routed.costUsd : null,
     latencyMs: Date.now() - t0,
     fromCache: false,
     usage: {

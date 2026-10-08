@@ -59,3 +59,15 @@ test('group schema requires count intent and bounded filters; no unscoped enumer
   assert.ok(validateIntentResult({ ...intent, countGroups: Array(7).fill({ label: 'Dev', team: 'Dev' }) }).length);
   assert.equal(retrieve({ intent: { ...intent, searchParams: {} }, directory }).totalMatches, 0);
 });
+
+test('English name, email and position come directly from the approved directory fields', async () => {
+  const withEnglish = { ...directory, 'a@example.test': { ...directory['a@example.test'], fullNameEn: 'Somchai Example' } };
+  const answer = await handlePeopleQuery('ขอชื่อภาษาอังกฤษ อีเมลและตำแหน่งของ a@example.test', {
+    deterministicResponses: true,
+    intentLlm: async () => JSON.stringify({ subIntent: 'PERSON_LOOKUP', confidence: .99, searchParams: { personRef: 'a@example.test' } }),
+    responderLlm: async () => { throw new Error('roster must not call a model'); },
+    getDirectory: async () => withEnglish, getKnownNames: async () => [],
+  });
+  assert.match(answer.text, /Somchai Example/); assert.match(answer.text, /a@example.test/); assert.match(answer.text, /Developer/);
+  assert.doesNotMatch(answer.text, /b@example.test|c@example.test/);
+});

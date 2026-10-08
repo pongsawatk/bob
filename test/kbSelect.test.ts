@@ -27,8 +27,9 @@ test('short follow-up retains the user topic, but a new topic does not', () => {
   assert.ok(selectDocs('ขอลิงก์หน่อย', bundle, history).bundle.includes('การบันทึก Timesheet'));
 });
 
-test('broad and small bundles preserve all sources, selection is deterministic', () => {
-  assert.equal(selectDocs('ฉันลาอะไรได้บ้าง', bundle).bundle, bundle);
+test('broad leave questions stay on topic, small bundles remain whole and deterministic', () => {
+  assert.ok(selectDocs('ฉันลาอะไรได้บ้าง', bundle).bundle.includes('วันลา'));
+  assert.ok(selectDocs('ฉันลาอะไรได้บ้าง', bundle).chars < bundle.length);
   assert.equal(selectDocs('อะไรก็ได้', '## Small\ncontent').bundle, '## Small\ncontent');
   assert.deepEqual(selectDocs('สวัสดิการวันลา', bundle), selectDocs('สวัสดิการวันลา', bundle));
 });

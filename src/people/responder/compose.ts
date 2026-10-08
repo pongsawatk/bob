@@ -113,6 +113,7 @@ export interface ResponseContext {
   shownCount: number;
   truncated: boolean;
   countOnly: boolean;
+  requestedFields?: string[];
   countGroups?: Array<{ label: string; count: number | null; reason?: string }>;
   filtersApplied?: { team?: string; bu?: string; role?: string; topic?: string; personRef?: string };
 }
@@ -195,6 +196,11 @@ export function rosterTemplate(ctx: ResponseContext): string {
   const lines = ctx.results.map((r, i) => {
     const p = r.profile;
     const who = `${p.displayName}${p.nickname ? ` (${p.nickname})` : ""}`;
+    if (ctx.requestedFields?.length) {
+      const labels: Record<string, string> = { fullNameEn: 'ชื่อภาษาอังกฤษ', email: 'อีเมล', position: 'ตำแหน่ง', functionTeam: 'ทีม', supervisor: 'หัวหน้า', startDate: 'วันเริ่มงาน' };
+      const fields = ctx.requestedFields.filter(f => Object.hasOwn(labels, f)).map(f => `${labels[f]}: ${String(p[f as keyof typeof p] || 'ยังไม่มีข้อมูลในทะเบียน')}`);
+      return `${i + 1}. ${who} — ${fields.join(' · ')}`;
+    }
     const role = [p.position, p.functionTeam || p.subOrg].filter(Boolean).join(" · ");
     return `${i + 1}. ${who}${role ? ` — ${role}` : ""}${p.email ? ` — ${p.email}` : ""}`;
   });
@@ -224,6 +230,7 @@ export interface ComposeInput extends ResponseContext {
   llm: LlmCall;
   /** all directory display names + nicknames, for the leak check. */
   knownNames?: string[];
+  deterministic?: boolean;
 }
 
 export interface ComposeResult {
@@ -246,6 +253,7 @@ export async function compose(input: ComposeInput): Promise<ComposeResult> {
     return { text: countTemplate(input), usedFallback: false, reason: "deterministic_count" };
   }
   if (results.length === 0) return { text: templateFallback([]), usedFallback: true, reason: "no_results" };
+  if (input.deterministic) return { text: rosterTemplate(input), usedFallback: false, reason: 'deterministic_roster' };
 
   let output = "";
   try {

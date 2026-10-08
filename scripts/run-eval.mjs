@@ -55,12 +55,13 @@ function ruleCheck(tc, answer, category) {
 }
 
 // ── LLM judge (deepseek) → { score 1-5, reason } ────────────────────
-async function judge(tc, answer, attempt = 1) {
+async function judge(tc, answer, evidence, attempt = 1) {
+  if (!evidence) return { score: null, reason: 'source evidence unavailable' };
   const sys =
     "คุณเป็นผู้ตรวจคุณภาพคำตอบของแชทบอท HR ภายในองค์กร ประเมินอย่างเข้มงวดและยุติธรรม ตอบเป็น JSON เท่านั้น";
   const user =
     `คำถามผู้ใช้:\n${tc.question}\n\nคำตอบของบอท:\n${answer}\n\n` +
-    `เกณฑ์การประเมิน:\n${tc.judge}\n\n` +
+    `หลักฐาน KB ที่ส่งให้บอท:\n${evidence}\n\nเกณฑ์การประเมิน:\n${tc.judge}\n\n` +
     `ให้คะแนน 1-5 (5=ตรงคำถาม ถูกต้อง grounded ตามเกณฑ์; 3=พอใช้/ไม่ครบ; 1=ผิด/มั่ว/ไม่ตรงคำถาม). ` +
     `ตอบ JSON เท่านั้น (บรรทัดเดียว): {"score": <1-5>, "reason": "<สั้นๆ ไทย>"}`;
   let r;
@@ -76,17 +77,17 @@ async function judge(tc, answer, attempt = 1) {
     // callLLM throws on empty content (guards blank cards in Teams) — but for the
     // judge an empty completion is routine (deepseek sometimes burns all tokens on
     // reasoning). Retry once, then fall back to rules-only, same as garbled JSON.
-    if (attempt < 2) return judge(tc, answer, attempt + 1);
+    if (attempt < 2) return judge(tc, answer, evidence, attempt + 1);
     return { score: null, reason: `judge unavailable: ${String(err).slice(0, 80)}` };
   }
   const match = r.text.match(/\{[\s\S]*\}/); // grab the JSON object even if prefixed by reasoning
   if (match) {
     try {
       const j = JSON.parse(match[0]);
-      if (j && j.score != null) return { score: Number(j.score), reason: j.reason || "" };
+      if (j && Number.isInteger(j.score) && j.score >= 1 && j.score <= 5) return { score: j.score, reason: j.reason || "" };
     } catch {}
   }
-  if (attempt < 2) return judge(tc, answer, attempt + 1); // retry once on empty/garbled
+  if (attempt < 2) return judge(tc, answer, evidence, attempt + 1);
   // Judge genuinely unavailable → don't fabricate a failing score; fall back to rules only.
   return { score: null, reason: `judge unavailable: "${r.text.slice(0, 80)}"` };
 }
@@ -98,7 +99,7 @@ function severityOf(tc, ruleFails, judged) {
     if (judged.score <= 2) return "FAIL";
     if (judged.score === 3) return "WARN";
   }
-  return "PASS";
+  return judged?.score != null ? 'PASS' : 'UNREVIEWED';
 }
 
 async function main() {
@@ -119,13 +120,15 @@ async function main() {
   const outStream = fs.createWriteStream(args.out, { flags: "w" });
   console.log(`▶️  ${cases.length} cases | judge=${args.nojudge ? "off" : args["judge-model"]}\n`);
 
-  const sum = { PASS: 0, WARN: 0, FAIL: 0, FAIL_CRITICAL: 0 };
+  const sum = { PASS: 0, WARN: 0, FAIL: 0, FAIL_CRITICAL: 0, UNREVIEWED: 0 };
   const regressions = [];
 
   for (const tc of cases) {
-    let answer = "", category = "ERROR", err = null;
+    let answer = "", category = "ERROR", err = null, snapshot, output;
     try {
-      const res = await runPipeline({ message: tc.question, userId: "eval", userName: "Eval", department: "QA" });
+      const res = await runPipeline({ message: tc.question, history: tc.history, channel: 'eval', userId: "eval", userName: "Eval", department: "QA", captureSnapshot: s => { snapshot = s; } });
+      output = res;
+      if (res.errorStage) throw new Error(res.errorStage);
       answer = (res.answer || "").toString();
       category = res.category;
     } catch (e) {
@@ -133,21 +136,23 @@ async function main() {
     }
 
     const ruleFails = err ? [`pipeline error: ${err}`] : ruleCheck(tc, answer, category);
-    const judged = !args.nojudge && !err ? await judge(tc, answer) : null;
+    if (output?.finishReason === 'length') ruleFails.push('truncated answer');
+    const judged = !args.nojudge && !err ? await judge(tc, answer, snapshot?.selection.bundle) : null;
     const severity = err ? "FAIL" : severityOf(tc, ruleFails, judged);
     sum[severity] = (sum[severity] || 0) + 1;
 
-    const row = { id: tc.id, severity, category, ruleFails, judge: judged, note: tc.note, answer: answer.slice(0, 300) };
+    const row = { id: tc.id, severity, category, ruleFails, judge: judged, note: tc.note, answer, output,
+      promptHash: snapshot?.promptHash, kbHash: snapshot?.kbHash, sourceClock: snapshot?.createdAt, evidence: snapshot?.selection.bundle };
     outStream.write(JSON.stringify(row) + "\n");
 
-    const icon = { PASS: "✅", WARN: "⚠️ ", FAIL: "❌", FAIL_CRITICAL: "🔴" }[severity];
+    const icon = { PASS: "✅", WARN: "⚠️ ", FAIL: "❌", FAIL_CRITICAL: "🔴", UNREVIEWED: '○' }[severity];
     const jtxt = judged ? (judged.score != null ? ` judge=${judged.score}/5` : " judge=NA") : "";
     console.log(`${icon} ${tc.id.padEnd(16)} ${severity}${jtxt}${ruleFails.length ? " — " + ruleFails.join("; ") : ""}`);
     if (judged && (judged.score == null || judged.score <= 3)) console.log(`      ↳ ${judged.reason}`);
 
     if (base?.has(tc.id)) {
       const b = base.get(tc.id);
-      const rank = { PASS: 3, WARN: 2, FAIL: 1, FAIL_CRITICAL: 0 };
+      const rank = { PASS: 3, WARN: 2, UNREVIEWED: 2, FAIL: 1, FAIL_CRITICAL: 0 };
       if (rank[severity] < rank[b.severity]) regressions.push(`${tc.id}: ${b.severity} → ${severity}`);
     }
   }
@@ -155,7 +160,7 @@ async function main() {
 
   const total = cases.length;
   console.log(`\n=== EVAL SUMMARY ===`);
-  console.log(`✅ PASS ${sum.PASS}/${total}  ⚠️ WARN ${sum.WARN}  ❌ FAIL ${sum.FAIL}  🔴 CRITICAL ${sum.FAIL_CRITICAL}`);
+  console.log(`PASS ${sum.PASS}/${total}; WARN ${sum.WARN}; FAIL ${sum.FAIL}; CRITICAL ${sum.FAIL_CRITICAL}; UNREVIEWED ${sum.UNREVIEWED}`);
   console.log(`Output: ${args.out}`);
   if (base) {
     if (regressions.length) {
@@ -165,6 +170,7 @@ async function main() {
     }
     console.log(`\n✅ No regressions vs baseline.`);
   }
+  if (sum.FAIL || sum.FAIL_CRITICAL) process.exitCode = 2;
 }
 
 main().catch((e) => { console.error("Fatal:", e); process.exit(1); });

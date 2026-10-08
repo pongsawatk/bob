@@ -9,7 +9,8 @@ import { withBudget } from '../http/budget.js';
 import { refreshKB } from "../kb/index.js";
 import { lookupProfile, renderProfileBlock, refreshDirectory } from "../people/directory.js";
 import { scoreTrace } from "../obs/langfuse.js";
-import { getHistory, appendHistory, clearHistory } from "./history.js";
+import { getHistory, appendHistory, clearHistory, historyEpoch } from "./history.js";
+import { withConversationTurn } from './turns.js';
 import { saveConvRef } from "./convref.js";
 import { getRedis } from "../store/redis.js";
 import { checkRateLimit } from "./ratelimit.js";
@@ -342,6 +343,7 @@ export async function handleTeamsRequest(
     const stopTyping = startTyping(ctx);
     const deadlineMs = Date.now() + 45_000;
     try {
+      const turnStatus = await withConversationTurn(activity.conversation?.id ?? aadId, activity.id ?? '', async () => {
       const userName = activity.from.name ?? "คุณ";
       const email = await withBudget(4000, () => resolveEmail(ctx, aadId)).catch(() => '');
       const userId = email || aadId;
@@ -364,6 +366,7 @@ export async function handleTeamsRequest(
       }
 
       const convId = activity.conversation?.id ?? userId;
+      const epoch = await historyEpoch(convId);
       const history = await withBudget(2000, () => getHistory(convId)).catch(() => []);
 
       const output = await runPipeline({
@@ -380,16 +383,20 @@ export async function handleTeamsRequest(
         // never a join key — People Connector binds on email alone.
         requester: { email: email || undefined, aadObjectId: aadId, displayName: userName },
       }, async answer => {
+        if (await historyEpoch(convId) !== epoch) return false;
         const reply = buildAdaptiveCard({ ...answer, answer: introLine ? `${introLine}\n\n${answer.answer}` : answer.answer });
         await ctx.sendActivity(reply);
       });
 
       // Only persist an assistant turn after Teams confirms the send.
+      if (output.deliveryCancelled) return;
       await Promise.allSettled([
-        withBudget(2000, () => appendHistory(convId, message, output.answer)).catch(() => console.error('[history] save failed')),
+        withBudget(2000, () => appendHistory(convId, message, output.answer, epoch)).catch(() => console.error('[history] save failed')),
         // Preserve the existing operations alert even when the pipeline returns a safe error reply.
         output.errorStage ? withBudget(3000, () => alertError('Teams pipeline', new Error(output.errorStage))) : Promise.resolve(),
       ]);
+      });
+      if (turnStatus === 'busy') await ctx.sendActivity('คำถามก่อนหน้ายังประมวลผลอยู่ครับ กรุณาส่งคำถามนี้อีกครั้งเมื่อได้รับคำตอบก่อนหน้าแล้ว');
     } finally {
       stopTyping();
     }

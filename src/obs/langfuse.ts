@@ -25,7 +25,7 @@ export interface LFGeneration {
   output: unknown;
   latencyMs: number;
   /** Token counts + actual cost (USD) — drives Langfuse's Model/Cost columns. */
-  usage: { input: number; output: number; total: number; totalCost: number };
+  usage: { input: number; output: number; total: number; totalCost: number | null };
   /** Extra context (e.g. cacheReadTokens for prompt-cache ROI). */
   metadata?: Record<string, unknown>;
 }
@@ -108,7 +108,7 @@ export function createTraceAdapter(root: LangfuseSpan): LFTrace {
             output: usage.output,
             total: usage.total,
           },
-          costDetails: { total: usage.totalCost },
+          ...(usage.totalCost != null ? { costDetails: { total: usage.totalCost } } : {}),
         },
         {
           asType: "generation",

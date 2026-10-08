@@ -89,6 +89,7 @@ export interface IntentResult {
  *  never imports one, so the plan's "strip technical id" concern is moot here. */
 export interface WorkProfile {
   displayName: string;
+  fullNameEn?: string;
   nickname?: string;
   email?: string;
   org?: string;
@@ -111,6 +112,7 @@ export interface WorkProfile {
  *  Excludes rank, payroll id, prefix, and every sensitive attribute (§5, §8). */
 export const ALLOWLIST_FIELDS: ReadonlySet<string> = new Set([
   "displayName",
+  "fullNameEn",
   "nickname",
   "email",
   "org",

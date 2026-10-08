@@ -1,6 +1,7 @@
 import { callLLM, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { env } from "../env.js";
+import { modelSettings } from '../llm/modelConfig.js';
 
 export type Category = "HR" | "PRODUCT" | "IT" | "GENERAL" | "PEOPLE" | "UNKNOWN";
 
@@ -15,7 +16,7 @@ export interface RouterResult {
   latencyMs: number;
   /** Time spent fetching the router prompt (getPrompt) — for latency-overhead profiling. */
   promptMs: number;
-  costUsd: number;
+  costUsd: number | null;
   usage: { inputTokens: number; outputTokens: number };
 }
 
@@ -23,7 +24,7 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
   const tPrompt = Date.now();
   const { text: promptTemplate, version: promptVersion } = await getPrompt("router");
   const promptMs = Date.now() - tPrompt;
-  const systemPrompt = promptTemplate.replace("{{user_message}}", message);
+  const systemPrompt = promptTemplate.replace("{{user_message}}", () => message);
 
   // User turns establish topics. Old assistant guesses must not steer routing
   // away from the current source boundary before IT retrieval runs.
@@ -38,11 +39,9 @@ export async function routeMessage(message: string, history: LLMMessage[] = []):
   const userMsg = `${historyContext}คำถามล่าสุด: ${message}\n\nตอบเป็น JSON เท่านั้น: {"category":"HR|PRODUCT|IT|GENERAL|PEOPLE|UNKNOWN","confidence":0.0-1.0,"needs_clarification":boolean}`;
 
   const result = await callLLM({
-    model: env.MODEL_ROUTER,
+    ...modelSettings('ROUTER'),
     systemPrompt,
     messages: [{ role: "user", content: userMsg }],
-    maxTokens: 60,
-    temperature: 0.0,
   });
 
   const raw = result.text.trim();

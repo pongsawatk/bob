@@ -6,6 +6,7 @@
 // wires the real OpenRouter + directory for the admin-shadow /people command.
 
 import { callLLM } from "../llm/openrouter.js";
+import { modelSettings } from '../llm/modelConfig.js';
 import type { LFGeneration } from "../obs/langfuse.js";
 import { env } from "../env.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
@@ -46,6 +47,7 @@ const MSG = {
 };
 
 export interface PeopleDeps {
+  deterministicResponses?: boolean;
   intentLlm: LlmCall;
   responderLlm: LlmCall;
   getDirectory: () => Promise<ProfileMap>;
@@ -251,6 +253,14 @@ export async function handlePeopleQuery(
   const knownNames = await deps.getKnownNames();
   const tResponder = Date.now();
   const composed = await compose({
+    deterministic: deps.deterministicResponses,
+    requestedFields: [
+      ...(/ภาษาอังกฤษ|english|ชื่ออังกฤษ/i.test(query) ? ['fullNameEn'] : []),
+      ...(/อีเมล|email|e-mail/i.test(query) ? ['email'] : []),
+      ...(/ตำแหน่ง|position/i.test(query) ? ['position'] : []),
+      ...(/อยู่ทีมไหน|ทีมอะไร|พร้อมทีม|ระบุทีม/i.test(query) ? ['functionTeam'] : []),
+      ...(/วันเริ่มงาน|start date/i.test(query) ? ['startDate'] : []),
+    ],
     results: response.results,
     query,
     llm: deps.responderLlm,
@@ -324,6 +334,7 @@ export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
       }
       const r = await callLLM({
         model,
+        effort: modelSettings(name === 'people:intent' ? 'PEOPLE_INTENT' : 'PEOPLE').effort,
         systemPrompt,
         messages: [{ role: "user", content: user }],
         maxTokens,
@@ -342,18 +353,20 @@ export function defaultPeopleDeps(recordGeneration?: GenRecorder): PeopleDeps {
           total: r.usage.inputTokens + r.usage.outputTokens,
           totalCost: r.costUsd,
         },
-        metadata: { systemPolicyVersion: SYSTEM_POLICY_VERSION },
+        metadata: { systemPolicyVersion: SYSTEM_POLICY_VERSION, requestedEffort: r.requestedEffort, effectiveEffort: r.effectiveEffort,
+          actualModel: r.actualModel, provider: r.provider, finishReason: r.finishReason, reasoningTokens: r.usage.reasoningTokens },
       });
       return r.text;
     };
 
-  const intentLlm = instrumented("people:intent", "people-intent", INTENT_SYSTEM_PROMPT, env.MODEL_ROUTER, 450, 0);
+  const intentLlm = instrumented("people:intent", "people-intent", INTENT_SYSTEM_PROMPT, env.MODEL_PEOPLE_INTENT, 1000, 0);
   // good Thai composing; only reached for answers that actually need phrasing —
   // counts and rosters are templated (WP-03).
-  const responderLlm = instrumented("people:responder", "people-responder", RESPONDER_SYSTEM_PROMPT, env.MODEL_HR, 400, 0.3);
+  const responderLlm = instrumented("people:responder", "people-responder", RESPONDER_SYSTEM_PROMPT, env.MODEL_PEOPLE, 800, 0.3);
 
   return {
     intentLlm,
+    deterministicResponses: true,
     responderLlm,
     getDirectory: getActiveDirectory,
     getKnownNames: getDirectoryNames,

@@ -6,6 +6,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { env } from "../src/env.js";
 import { runPipeline } from "../src/pipeline/index.js";
 import { prepareITSnapshot, writeITSnapshot, getITBundle } from '../src/kb/it.js';
+import { isExperimentArm } from '../src/llm/modelConfig.js';
 
 export const config = { maxDuration: 60 };
 
@@ -37,17 +38,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
   const history = req.body?.history;
+  if (req.body?.experimentArm !== undefined && !isExperimentArm(req.body.experimentArm)) {
+    res.status(400).json({ error: 'Invalid experiment arm' }); return;
+  }
   if (history !== undefined && (!Array.isArray(history) || history.length > 14 || history.some(m =>
     !m || !['user', 'assistant'].includes(m.role) || typeof m.content !== 'string' || m.content.length > 10000))) {
     res.status(400).json({ error: 'Invalid test conversation history' }); return;
   }
-  const { message, userId, userName, department } = req.body as {
+  const { message, userId, userName, department } = (req.body ?? {}) as {
     message?: string;
     userId?: string;
     userName?: string;
     department?: string;
   };
-  if (!message) {
+  if (typeof message !== 'string' || !message.trim() || message.length > 10000) {
     res.status(400).json({ error: "message is required" });
     return;
   }
@@ -59,6 +63,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       userName: userName ?? "Tester",
       department: department ?? "",
       history,
+      experimentArm: req.body.experimentArm,
+      queueEvaluation: req.body.queueEvaluation === true,
     });
     res.status(200).json(result);
   } catch (err) {

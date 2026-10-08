@@ -14,10 +14,12 @@ export const env = {
   // OpenRouter
   OPENROUTER_API_KEY: req("OPENROUTER_API_KEY"),
   MODEL_ROUTER:  opt("MODEL_ROUTER",  "google/gemini-3.1-flash-lite"),
-  MODEL_HR:      opt("MODEL_HR",      "anthropic/claude-sonnet-4-6"),
+  MODEL_HR:      opt("MODEL_HR",      "anthropic/claude-sonnet-5"),
   MODEL_GENERAL: opt("MODEL_GENERAL", "google/gemini-3.1-flash-lite"),
-  MODEL_PRODUCT: opt("MODEL_PRODUCT", "anthropic/claude-sonnet-4-6"),
-  MODEL_IT:      opt("MODEL_IT", opt("MODEL_HR", "anthropic/claude-sonnet-4-6")),
+  MODEL_PRODUCT: opt("MODEL_PRODUCT", "anthropic/claude-sonnet-5"),
+  MODEL_IT:      opt("MODEL_IT", opt("MODEL_HR", "anthropic/claude-sonnet-5")),
+  MODEL_PEOPLE: opt("MODEL_PEOPLE", "anthropic/claude-haiku-5.5"),
+  MODEL_PEOPLE_INTENT: opt("MODEL_PEOPLE_INTENT", opt("MODEL_ROUTER", "google/gemini-3.1-flash-lite")),
   MODEL_ASYNC:   opt("MODEL_ASYNC",   "deepseek/deepseek-v4-flash"),
   MODEL_INSIGHT: opt("MODEL_INSIGHT", ""),  // /insight analysis; empty → MODEL_ASYNC
   INSIGHT_MAX_TOKENS: opt("INSIGHT_MAX_TOKENS", "4000"), // analysis JSON needs ~2.4k+; 2k truncates

@@ -31,9 +31,12 @@ function loadFallback(name: string): LoadedPrompt {
   return prompt;
 }
 
-async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
+export interface PromptSelector { version?: number; label?: string }
+async function fetchFromLangfuse(name: string, selector: PromptSelector = {}): Promise<LoadedPrompt | null> {
   if (!env.LANGFUSE_PUBLIC_KEY || !env.LANGFUSE_SECRET_KEY) return null;
-  const cached = lfCache.get(name);
+  const query = selector.version ? `version=${selector.version}` : `label=${encodeURIComponent(selector.label ?? 'production')}`;
+  const cacheKey = `${name}?${query}`;
+  const cached = lfCache.get(cacheKey);
   if (cached && Date.now() - cached.at < LF_TTL_MS) return cached.prompt;
 
   try {
@@ -43,7 +46,7 @@ async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
     // Fail fast (1.5s, no retry): a slow/down Langfuse must not stall a reply —
     // a throw/timeout here drops to the local fallback file via the catch below.
     const res = await fetchRetry(
-      `${env.LANGFUSE_HOST}/api/public/v2/prompts/${encodeURIComponent(name)}?label=production`,
+      `${env.LANGFUSE_HOST}/api/public/v2/prompts/${encodeURIComponent(name)}?${query}`,
       { headers: { Authorization: `Basic ${auth}` } },
       { retries: 0, timeoutMs: 1500 }
     );
@@ -54,7 +57,7 @@ async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
     else if (Array.isArray(j.prompt)) text = j.prompt.map((b) => b.text ?? "").join("");
     if (!text) return null;
     const prompt: LoadedPrompt = { text, version: j.version != null ? `v${j.version}` : "production" };
-    lfCache.set(name, { prompt, at: Date.now() });
+    lfCache.set(cacheKey, { prompt, at: Date.now() });
     return prompt;
   } catch {
     return null;
@@ -65,8 +68,11 @@ async function fetchFromLangfuse(name: string): Promise<LoadedPrompt | null> {
  * Get a prompt by name. Tries Langfuse (label=production) first,
  * falls back to prompts/fallback/<name>.txt.
  */
-export async function getPrompt(name: string): Promise<LoadedPrompt> {
-  const remote = await fetchFromLangfuse(name);
+export async function getPrompt(name: string, selector: PromptSelector = {}): Promise<LoadedPrompt> {
+  const pinned = process.env[`BOB_PROMPT_VERSION_${name.replaceAll('-', '_').toUpperCase()}`];
+  if (!selector.version && !selector.label && pinned && /^[1-9]\d*$/.test(pinned)) selector = { version: Number(pinned) };
+  const remote = await fetchFromLangfuse(name, selector);
+  if (!remote && (selector.version || selector.label)) throw new Error(`Pinned prompt unavailable: ${name}`);
   const prompt = remote ?? loadFallback(name);
   return { ...prompt, text: applySystemPolicy(name, prompt.text) };
 }

@@ -129,6 +129,7 @@ export function toWorkProfile(p: Profile, tags?: TagInfo, now = new Date()): Wor
   const t = p.startDate ? tenure(p.startDate, now) : null;
   return {
     displayName: p.fullNameTh || p.fullNameEn || p.email,
+    fullNameEn: p.fullNameEn,
     nickname: p.nickname,
     email: p.email,
     org: p.org,

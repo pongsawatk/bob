@@ -15,11 +15,11 @@ const SEP = "\n\n---\n\n";
 // Tunables. Conservative on the first cut — prove quality holds (via run-eval),
 // then lower the budget for more savings.
 const BUDGET_CHARS = 18_000; // ~1/3 of the full HR bundle
-const MIN_DOCS = 6; // always keep at least this many top docs
+const MIN_DOCS = 2;
 const TITLE_WEIGHT = 3; // a hit in the title counts more than in the body
 
-// Broad/enumerate questions need many docs across topics — send the full bundle
-// rather than risk dropping one (e.g. "ฉันลาอะไรได้บ้าง" must list every leave type).
+// Broad questions without a topic use the full bundle. Topic-specific lists
+// retain relevant chapters and their explicit references.
 // "ได้บ้าง" / "อะไรบ้าง" / "กี่ประเภท" are the common enumerate markers.
 const BROAD = /อะไร\S{0,6}บ้าง|มีอะไร|ได้บ้าง|บ้างไหม|กี่ประเภท|ประเภท(ไหน|ใด|อะไร)|ทั้งหมด|ทุกอย่าง|ทุกประเภท|สรุป(ให้|มา|ทั้ง)?|รายการ|list|overview|ภาพรวม/i;
 
@@ -49,6 +49,8 @@ export interface SelectResult {
   mode: "full" | "broad" | "retrieved";
   sources?: Array<{ title: string; url?: string }>;
   contextUsed?: boolean;
+  referencedDocuments?: number;
+  budgetExceeded?: boolean;
 }
 
 /** Pick the question-relevant subset of an assembled KB bundle (split on SEP). */
@@ -59,10 +61,10 @@ export function selectDocs(question: string, fullBundle: string, history: readon
   const sources = (bs: string[]) => bs.map(b => ({ title: b.split('\n')[0]!.replace(/^##\s*/, ''), url: /แหล่งอ้างอิง:\s*(https?:\/\/\S+)/.exec(b)?.[1] }));
   const base = { total: blocks.length, fullChars, contextUsed: query !== canonicalQuery(question) };
 
-  // Already small, or a broad/list question → use everything.
+  // Already small, or an unscoped broad question → use everything.
   if (fullChars <= BUDGET_CHARS)
     return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "full", sources: sources(blocks), ...base };
-  if (BROAD.test(question))
+  if (BROAD.test(question) && queryConcepts(query).length === 0)
     return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "broad", sources: sources(blocks), ...base };
 
   const qg = ngrams(query);
@@ -71,8 +73,9 @@ export function selectDocs(question: string, fullBundle: string, history: readon
     const titleLine = b.split("\n", 1)[0] || "";
     // Explicit topic in a title outranks generic shared words such as สวัสดิการ.
     const topicHits = queryConcepts(titleLine).filter(c => concepts.includes(c)).length;
-    const score = 1000 * topicHits + overlap(qg, ngrams(b)) + TITLE_WEIGHT * overlap(qg, ngrams(titleLine));
-    return { b, i, score };
+    const bodyHits = queryConcepts(b).filter(c => concepts.includes(c)).length;
+    const score = 1000 * topicHits + 100 * bodyHits + overlap(qg, ngrams(b)) + TITLE_WEIGHT * overlap(qg, ngrams(titleLine));
+    return { b, i, score, bodyHits, topicHits };
   });
 
   // No lexical signal at all → don't guess, send the full bundle (safe).
@@ -85,17 +88,33 @@ export function selectDocs(question: string, fullBundle: string, history: readon
   const picked: typeof scored = [];
   let chars = 0;
   for (const s of scored) {
+    if (BROAD.test(question) && concepts.length && !s.bodyHits && !s.topicHits) continue;
     if (picked.length >= MIN_DOCS && chars + s.b.length > BUDGET_CHARS) continue;
     picked.push(s);
     chars += s.b.length;
+  }
+  // Follow explicit references, preserving entire documents and their exceptions.
+  const initial = picked.length;
+  const seen = new Set(picked.map(p => p.i));
+  for (let depth = 0; depth < 2; depth++) {
+    const bodies = picked.map(p => p.b.split('\n').slice(2).join('\n')).join('\n');
+    const chapters = new Set([...bodies.matchAll(/(?:หมวด|บท)(?:ที่)?\s*(\d+)/g)].map(m => m[1]));
+    const additions = scored.filter(s => !seen.has(s.i) && (
+      [...s.b.split('\n')[0]!.matchAll(/(?:หมวด|บท)(?:ที่)?\s*(\d+)/g)].some(m => chapters.has(m[1])) ||
+      (/แหล่งอ้างอิง:\s*(https?:\/\/\S+)/.exec(s.b)?.[1] && bodies.includes(/แหล่งอ้างอิง:\s*(https?:\/\/\S+)/.exec(s.b)![1]!))
+    ));
+    if (!additions.length) break;
+    for (const s of additions) { seen.add(s.i); picked.push(s); chars += s.b.length; }
   }
   // Restore document order for a stable, readable bundle (and stable cache key).
   picked.sort((a, b) => a.i - b.i);
   return {
     bundle: picked.map((p) => p.b).join(SEP),
     selected: picked.length,
-    chars,
-    mode: "retrieved",
+    chars: picked.map(p => p.b).join(SEP).length,
+    mode: BROAD.test(question) ? 'broad' : 'retrieved',
+    referencedDocuments: picked.length - initial,
+    budgetExceeded: chars > BUDGET_CHARS,
     sources: sources(picked.map(p => p.b)),
     ...base,
   };
