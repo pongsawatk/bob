@@ -88,7 +88,9 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
       headers: {
         Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
-        "X-Title": "BOB Sidekick",
+        "X-OpenRouter-Title": "BOB",
+        "HTTP-Referer": "https://bob-sidekick.vercel.app",
+        "X-OpenRouter-App-Visibility": "hidden",
       },
       body: JSON.stringify(body),
     },

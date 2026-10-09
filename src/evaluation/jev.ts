@@ -49,7 +49,15 @@ export async function reviewWithJev(state: { question: string; answer: string; e
   if (!state.question.trim() || !state.evidence.trim() || !state.answer.trim()) return skipped('missing_input');
   try {
     const res = await fetchRetry('https://openrouter.ai/api/alpha/decisions', {
-      method: 'POST', headers: { Authorization: `Bearer ${env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, body,
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'X-OpenRouter-Title': 'BOB',
+        'HTTP-Referer': 'https://bob-sidekick.vercel.app',
+        'X-OpenRouter-App-Visibility': 'hidden',
+      },
+      body,
     }, { retries: 0, timeoutMs: 8000 });
     if (!res.ok) return skipped(`http_${res.status}`);
     const j = await res.json() as { answers?: Record<string, { type?: string; choice?: string; confidence?: number }>; usage?: { cost?: number }; cost?: number };
