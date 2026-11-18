@@ -11,6 +11,7 @@ import {
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { env } from "../env.js";
 import { withBudget } from '../http/budget.js';
+import { sanitizeCredentialData } from '../security/credentials.js';
 
 export interface LFSpan {
   end: (output: unknown) => void;
@@ -90,7 +91,7 @@ export function createTraceAdapter(root: LangfuseSpan): LFTrace {
       const span = root.startObservation(name);
       return {
         end: (output) => {
-          span.update({ output });
+          span.update({ output: sanitizeCredentialData(output) });
           span.end();
         },
       };
@@ -101,8 +102,8 @@ export function createTraceAdapter(root: LangfuseSpan): LFTrace {
         {
           model,
           version,
-          input,
-          metadata,
+          input: sanitizeCredentialData(input),
+          metadata: sanitizeCredentialData(metadata),
           usageDetails: {
             input: usage.input,
             output: usage.output,
@@ -116,7 +117,7 @@ export function createTraceAdapter(root: LangfuseSpan): LFTrace {
           parentSpanContext: root.otelSpan.spanContext(),
         },
       );
-      generation.update({ output });
+      generation.update({ output: sanitizeCredentialData(output) });
       generation.end();
     },
     update: ({ output, metadata, tags }) => {
@@ -126,7 +127,7 @@ export function createTraceAdapter(root: LangfuseSpan): LFTrace {
       if (tags) {
         root.otelSpan.setAttribute(LangfuseOtelSpanAttributes.TRACE_TAGS, JSON.stringify(tags));
       }
-      root.update({ output, metadata: tags ? { ...metadata, tags } : metadata });
+      root.update(sanitizeCredentialData({ output, metadata: tags ? { ...metadata, tags } : metadata }));
     },
   };
 }
@@ -149,7 +150,7 @@ export async function runWithTrace<T>(start: LFTraceStart, fn: (trace: LFTrace) 
       },
       () =>
         startActiveObservation("bob-chat", async (root) => {
-          root.update({ input: start.input });
+          root.update({ input: sanitizeCredentialData(start.input) });
           return fn(createTraceAdapter(root));
         }),
     );

@@ -38,6 +38,50 @@ const HOLIDAYS_2569: Holiday[] = [
 
 const DATASET: Record<number, Holiday[]> = { 2026: HOLIDAYS_2569 };
 
+const MONTHS = [
+  ['มกราคม', 'มกรา', 'ม.ค.'], ['กุมภาพันธ์', 'กุมภา', 'ก.พ.'], ['มีนาคม', 'มีนา', 'มี.ค.'],
+  ['เมษายน', 'เมษา', 'เม.ย.'], ['พฤษภาคม', 'พฤษภา', 'พ.ค.'], ['มิถุนายน', 'มิถุนา', 'มิ.ย.'],
+  ['กรกฎาคม', 'กรกฎา', 'ก.ค.'], ['สิงหาคม', 'สิงหา', 'ส.ค.'], ['กันยายน', 'กันยา', 'ก.ย.'],
+  ['ตุลาคม', 'ตุลา', 'ต.ค.'], ['พฤศจิกายน', 'พฤศจิกา', 'พ.ย.'], ['ธันวาคม', 'ธันวา', 'ธ.ค.'],
+] as const;
+
+/** Answer only an unambiguous date list/count. Leave multi-part and policy
+ * questions to the HR answerer, including years beyond the curated calendar. */
+export function calendarAnswer(question: string, now = new Date()): string | undefined {
+  if (!/หยุด/.test(question)) return;
+  let rest = question.trim().replace(/\s+/g, '');
+  const current = bangkokISO(now);
+  let year = Number(current.slice(0, 4));
+  let month: number | undefined;
+  const explicit = /(?:พ\.ศ\.|ค\.ศ\.)?(?:25\d{2}|20\d{2})|(?:ประจำ)?ปี(\d{2})(?!\d)|ปี(นี้|หน้า|ที่แล้ว)/.exec(rest);
+  if (explicit) {
+    if (explicit[2]) year += explicit[2] === 'หน้า' ? 1 : explicit[2] === 'ที่แล้ว' ? -1 : 0;
+    else {
+      const n = explicit[1] ? 2500 + Number(explicit[1]) : Number(explicit[0].replace(/\D/g, ''));
+      year = n >= 2500 ? n - 543 : n;
+    }
+    rest = rest.replace(explicit[0], '');
+  }
+  for (const [index, aliases] of MONTHS.entries()) {
+    const alias = aliases.find(name => rest.includes(name));
+    if (alias) {
+      if (month !== undefined) return;
+      month = index + 1;
+      rest = rest.replace(alias, '');
+    }
+  }
+  if (month === undefined && !explicit) return;
+  // Remaining text must describe only the calendar, never silently ignore e.g.
+  // a named holiday, a second question, a specific date, or a leave request.
+  rest = rest.replace(/วันหยุดนักขัต(?:ฤกษ์|ฤกต์)|วันหยุดตามประเพณี|วันหยุด|หยุด|ประจำปี|ปี|เดือน|บริษัท|วันไหนบ้าง|วันไหน|กี่วัน|อะไรบ้าง|มี|ขอ|รายการ|ทั้งหมด|บ้าง|ครับ|ค่ะ|คะ|[?？]/g, '');
+  if (rest || !DATASET[year]) return;
+  const dates = DATASET[year]!.filter(h => !month || Number(h.date.slice(5, 7)) === month);
+  const period = (month ? MONTHS[month - 1]![0] + ' ' : '') + (year + 543);
+  return [`วันหยุดบริษัท${month ? 'เดือน' : 'ปี '}${period} มี ${dates.length} วันครับ`,
+    ...dates.map(h => `- ${h.display} — ${h.name}`),
+    'อ้างอิง: https://outline.builk.id/doc/2569-791DOshv2d'].join('\n');
+}
+
 /** Today's date in Asia/Bangkok as "yyyy-mm-dd" (en-CA yields ISO order). */
 function bangkokISO(now: Date): string {
   return new Intl.DateTimeFormat("en-CA", {

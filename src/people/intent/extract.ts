@@ -25,7 +25,7 @@ export type LlmCall = (userContent: string) => Promise<string>;
 /** Thai first-person pronouns. Matched as plain substrings because Thai is written
  *  without spaces — "หัวหน้าฉัน" has no boundary before "ฉัน", and requiring one is why
  *  the obvious phrasing of the broadcast CTA read as "not self". */
-const SELF_TH_RE = /(?:หัวหน้า|ทีม|ข้อมูล|อีเมล|email|อายุงาน|ชื่อ|ตำแหน่ง|สังกัด)(?:ของ)?(?:ฉัน|ผม|ดิฉัน|เรา|ตัวเอง)|(?:ฉัน|ผม|ดิฉัน|หนู|เรา)(?:อยู่ทีม|อยู่แผนก|ทำงาน|เริ่มงาน|ชื่อ|มีอายุงาน)|ของ(?:ฉัน|ผม|ดิฉัน|เรา|ตัวเอง)/;
+const SELF_TH_RE = /(?:หัวหน้า|ทีม|ข้อมูล|อีเมล|email|อายุงาน|ชื่อ|ตำแหน่ง|สังกัด)(?:ของ)?(?:ฉัน|ผม|ดิฉัน|เรา|ตัวเอง)|(?:ฉัน|ผม|ดิฉัน|หนู|เรา|กู)\s*(?:อยู่\s*(?:ทีม|แผนก|(?:corporate\s+)?department|function\s*\/?\s*team)|ทำงาน|เริ่มงาน|ชื่อ|(?:มี)?อายุงาน|คือใคร|เป็นใคร)|รู้จัก(?:ฉัน|ผม|หนู|กู)(?:ไหม|มั้ย)|ของ(?:ฉัน|ผม|ดิฉัน|เรา|ตัวเอง)/i;
 
 /** English needs the opposite treatment: word boundaries, or "i" fires inside every
  *  other word. */
@@ -46,6 +46,7 @@ export function detectSelfReference(query: string, personRef?: string): boolean 
 /** Decide targetType from the query + extracted params. Code is the authority; an
  *  LLM-proposed value is only consulted for the TEAM/NAMED_PERSON distinction. */
 export function resolveTargetType(query: string, sp: SearchParams, proposed?: TargetType): TargetType {
+  if (!sp.personRef && /(?:corporate\s+department|function\s*\/?\s*team)/i.test(query) && detectSelfReference(query)) return 'SELF';
   if (!sp.personRef && (sp.team || sp.bu || sp.role) && !/(?:ทีม|แผนก|หัวหน้า)(?:ของ)?(?:ผม|ฉัน|เรา)|\bmy\s+(?:team|department|manager)\b/i.test(query)) return 'TEAM';
   if (detectSelfReference(query, sp.personRef)) return "SELF";
   if (sp.personRef?.trim()) return "NAMED_PERSON";
@@ -179,6 +180,9 @@ function coerce(parsed: unknown): IntentResult | null {
     ...(o.countGroups !== undefined ? { countGroups: o.countGroups as IntentResult['countGroups'] } : {}),
     ...(typeof o.targetType === "string" ? { targetType: o.targetType as TargetType } : {}),
   };
+  // Normalize field vocabulary before validating; unknown/sensitive fields still
+  // fail the allowlist instead of being silently dropped.
+  if (Array.isArray(candidate.requestedFields)) candidate.requestedFields=[...new Set(candidate.requestedFields.flatMap(f=>f==='team'?['org','subOrg']:f==='tenure'?['tenureYears','tenureMonths']:[f]))];
   return validateIntentResult(candidate).length === 0 ? candidate : null;
 }
 

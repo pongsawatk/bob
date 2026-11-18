@@ -35,4 +35,8 @@ test('runtime policy applies to remote and fallback prompt text; probation is co
   assert.match(safe.text, /1\. ติดต่อ HR/);
   assert.doesNotMatch(safe.text, /แน่นอน/);
   assert.equal(guardEligibility('หากผ่านทดลองงานแล้ว สามารถสมัครได้').guarded, false);
+  const shirt = 'คู่มือระบุว่าพนักงานที่ผ่านทดลองงานแล้วได้รับเสื้อ';
+  assert.equal(guardEligibility(shirt).text, shirt);
+  assert.equal(guardEligibility(shirt + ' และคุณผ่านทดลองงานแล้วแน่นอน').guarded, true);
+  assert.equal(guardEligibility('คุณเป็นพนักงานที่ผ่านทดลองงานแล้ว').guarded, true);
 });

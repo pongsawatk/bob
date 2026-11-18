@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getRedis } from '../../store/redis.js';
 import type { IntentResult } from '../pcTypes.js';
+import { queryConcepts } from '../../kb/query.js';
 
 export interface PeopleConversation {
   version: 1;
@@ -36,6 +37,8 @@ export async function writePeopleConversation(userId: string | undefined, sessio
 export function isPeopleFollowUp(query: string, state?: PeopleConversation): boolean {
   query=query.replace(/ขอ\s+/g,'ขอ').replace(/\s+ด้วย/g,'ด้วย');
   if (!state || query.length > 160) return false;
+  if (queryConcepts(query).length) return false;
+  if (/^เรียง(?:ตาม|จาก)?\s*อายุงาน/.test(query.trim())) return true;
   return /^(?:มีใครบ้าง|ใครบ้าง|ขอ(?:ราย)?ชื่อ(?:ด้วย)?|ขอ(?:อีเมล|อีเมล์|เมล|เมล์|email|e-mail)(?:ด้วย)?|ดูต่อ|มี(?:คนอื่น|อีก)|คน(?:ที่|แรก|สุดท้าย|\s)|เอา(?:คน|เฉพาะ)|ไม่ใช่|แล้ว.{1,50}(?:ล่ะ|ละ)|หัวหน้า(?:ของ)?(?:เขา|คนนี้)|แล้วใครดูแลภาพรวม)/i.test(query.trim())
     || (!!state.pending.length && /^(?:IT|HR|คน|ฝั่ง|ทีม|แผนก|[1-5](?:\s|$))/i.test(query.trim()));
 }

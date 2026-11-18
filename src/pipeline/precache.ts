@@ -33,6 +33,11 @@ function checkHolidayPrecache(message: string): PrecacheHit | null {
 // Simple keyword → instant response map (seed from common questions)
 const FAQ: Array<{ pattern: RegExp; answer: string; category: "HR" | "GENERAL" }> = [
   {
+    pattern: /^(?:bob|บ๊อบ|บอบ)\s*(?:มีอะไรใหม่บ้าง|ทำอะไรได้บ้าง|ช่วยอะไรได้บ้าง)(?:ครับ|ค่ะ|คะ|\s|\?)*$/i,
+    category: 'GENERAL',
+    answer: 'ตอนนี้ BOB ช่วยร่างข้อความ จัดลำดับงาน และเตรียม agenda ได้ครับ เช่น “ช่วยร่าง agenda ส่งต่องาน 30 นาที”\nตอบข้อมูล HR/Product จากคู่มือ และคู่มือ IT เช่น VPN, Google 2SV หรือ Outline MCP ได้ด้วย\nเรื่องวันลา ผมอธิบายสิทธิตามนโยบายได้ แต่ดูยอดคงเหลือสดให้ไม่ได้ ต้องตรวจใน HumanSoft ด้วยตัวคุณเองครับ',
+  },
+  {
     pattern: /^(สวัสดี|หวัดดี|hello|hi|ดี|เฮ้|เฮย)[ๆ\s!]*(ครับ|คับ|ค่ะ|คะ|จ้า|ฮะ)?[ๆ\s!]*$/i,
     category: "GENERAL",
     answer:

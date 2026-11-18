@@ -72,6 +72,9 @@ export type OrgDimension = 'primary' | 'org' | 'subOrg' | 'group' | 'department'
 /** Output of intent extraction (§6). The LLM returns ONLY this — never names,
  *  expertise, or relationships. */
 export interface IntentResult {
+  /** Set by the query planner for explicit roster formatting requests. */
+  groupBy?: 'position';
+  tenureOrder?: 'longest' | 'shortest';
   /** Bounded independent requests. Children cannot contain more requests. */
   requests?: IntentResult[];
   requestedFields?: string[];

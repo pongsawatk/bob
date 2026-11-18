@@ -51,7 +51,7 @@ test("blocked query → REFUSE message (uses original query text, not intent)", 
   const d = deps(intent("PERSON_LOOKUP", { personRef: "สมชาย" }));
   const r = await handlePeopleQuery("เงินเดือนของสมชายเท่าไหร่", d);
   assert.equal(r.outcome, "REFUSE");
-  assert.match(r.text, /ช่วยไม่ได้/);
+  assert.match(r.text, /ไม่เปิดเผยหรือเปรียบเทียบเงินเดือน/);
   assert.equal(d.audit!.all()[0]?.policyOutcome, "REFUSE");
 });
 

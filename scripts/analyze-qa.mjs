@@ -1,5 +1,5 @@
 // Analyze real user Q&A from Langfuse traces.
-// Usage: npx tsx scripts/analyze-qa.mjs [days=2] [--raw]
+// Usage: node --import tsx scripts/analyze-qa.mjs [days=2] [--raw|--review-only] [--split=<ISO timestamp>]
 import { loadEnv } from "./_load-env.mjs";
 loadEnv();
 
@@ -15,10 +15,50 @@ if (!PUB || !SEC) {
 }
 const fromDate = new Date(Date.now() - DAYS * 864e5);
 const { fetchTraces, normalizeAll } = await import("../src/analytics/langfuse.ts");
+const { reviewSentAnswers } = await import("../src/analytics/answerReview.ts");
+const asOf = new Date();
+const splitArg = process.argv.find(arg => arg.startsWith('--split='));
+const split = splitArg ? Date.parse(splitArg.slice('--split='.length)) : null;
+if (split !== null && !(split > fromDate.getTime() && split < asOf.getTime())) {
+  throw new Error('The before/after split must be a timestamp inside the report window.');
+}
 const allTraces = await fetchTraces(
   { host: HOST, publicKey: PUB, secretKey: SEC },
-  { fromMs: fromDate.getTime(), toMs: Date.now() },
+  { fromMs: fromDate.getTime(), toMs: asOf.getTime() },
 );
+
+async function readScores(name) {
+  const scores = [];
+  const authorization = 'Basic ' + Buffer.from(PUB + ':' + SEC).toString('base64');
+  for (let page = 1; ; page++) {
+    const query = new URLSearchParams({ name, fromTimestamp: fromDate.toISOString(),
+      toTimestamp: asOf.toISOString(), page: String(page), limit: '100' });
+    const res = await fetch(HOST + '/api/public/v2/scores?' + query, { headers: { authorization } });
+    if (!res.ok) throw new Error('Scores HTTP ' + res.status);
+    const body = await res.json();
+    if (!Array.isArray(body.data) || !Number.isInteger(body.meta?.totalPages)) throw new Error('Incomplete score page');
+    // Langfuse annotation scores are explicitly assigned by a human reviewer.
+    scores.push(...body.data.filter(s => name !== 'answer-review' || s.source === 'ANNOTATION'));
+    if (page >= body.meta.totalPages || !body.data.length) return scores;
+  }
+}
+
+let scores = null;
+try {
+  scores = (await Promise.all([readScores('user-feedback'), readScores('answer-review')])).flat();
+} catch (err) {
+  console.error('Feedback and human verdicts unavailable:', err.message);
+}
+const cohorts = split === null ? [['all', allTraces]] : [
+  ['before', allTraces.filter(t => Date.parse(t.timestamp) < split)],
+  ['after', allTraces.filter(t => Date.parse(t.timestamp) >= split)]
+];
+// Reasons identify trace IDs for inspection in Langfuse. No question, answer, or user identity in this section.
+console.log(JSON.stringify({ from: fromDate.toISOString(), asOf: asOf.toISOString(), split: splitArg?.slice(8),
+  note: 'Confirmed Teams sends only. Latest feedback per trace. Cost is spend across the voted cohort divided by reviewed or accepted count. Human evidence verdicts require an answer-review annotation. Unrated answers are not classified as correct.',
+  cohorts: Object.fromEntries(cohorts.map(([label, traces]) => [label, reviewSentAnswers(traces, scores)])) }, null, 2));
+if (process.argv.includes('--review-only')) process.exitCode = 0;
+else {
 
 // Same metric contract as reports: include verified AAD ids; exclude test traffic.
 const eligible = new Set(normalizeAll(allTraces).map(t => t.id));
@@ -134,3 +174,4 @@ for (const [kw, count] of sortedKw) {
 }
 
 console.log(`\nTotal Q&A analyzed: ${qaPairs.length}`);
+}

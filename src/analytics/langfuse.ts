@@ -40,6 +40,8 @@ export interface RawTrace {
   tags?: string[] | null; // [channel, category, "llm"|"precache"]
   latency?: number | null; // seconds
   totalCost?: number | null; // USD
+  /** False when generation billing was absent in any constituent observation. */
+  costKnown?: boolean;
 }
 
 /** Observation row returned by GET /api/public/v2/observations. */
@@ -191,7 +193,7 @@ export function normalizeTrace(t: RawTrace): NormalizedTurn | null {
     hasLatency: latencyMs > 0,
     answerStatus: ['answered', 'clarification', 'no_information', 'partial', 'refused', 'failed'].includes(String(md.answerStatus)) ? String(md.answerStatus) : 'unknown',
     outcomeSource: ['deterministic', 'text_heuristic', 'router'].includes(String(md.outcomeSource)) ? String(md.outcomeSource) : 'unknown',
-    deliveryStatus: ['sent', 'failed', 'unknown'].includes(String(md.deliveryStatus)) ? String(md.deliveryStatus) : 'not_recorded',
+    deliveryStatus: ['sent', 'failed', 'cancelled', 'unknown'].includes(String(md.deliveryStatus)) ? String(md.deliveryStatus) : 'not_recorded',
     reviewRequired: md.reviewRequired === true,
   };
 }
@@ -413,6 +415,8 @@ export function observationsToTraces(observations: RawObservation[]): RawTrace[]
       group.find((o) => o.parentObservationId == null);
     if (!root) continue;
     const totalCost = group.reduce((sum, o) => sum + num(o.totalCost ?? o.costDetails?.total), 0);
+    const generations = group.filter(o => o.type === 'GENERATION');
+    const costKnown = generations.length > 0 && generations.every(o => Number.isFinite(o.totalCost ?? o.costDetails?.total));
     const rawMetadata = parseJsonField(root.metadata);
     const delivery = group.find(o => o.name === 'delivery');
     const deliveryOutput = parseJsonField(delivery?.output);
@@ -438,6 +442,7 @@ export function observationsToTraces(observations: RawObservation[]): RawTrace[]
       tags: root.tags,
       latency: root.latency ?? derivedLatency ?? metadataLatency,
       totalCost,
+      costKnown,
     });
   }
   return traces.sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));

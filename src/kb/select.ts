@@ -10,6 +10,7 @@
 // Scoring is character n-gram overlap (no Thai word segmentation needed).
 
 import { canonicalQuery, retrievalQuery, queryConcepts, type QueryTurn } from './query.js';
+import { sanitizeCredentials } from '../security/credentials.js';
 const SEP = "\n\n---\n\n";
 
 // Tunables. Conservative on the first cut — prove quality holds (via run-eval),
@@ -55,26 +56,41 @@ export interface SelectResult {
 
 /** Pick the question-relevant subset of an assembled KB bundle (split on SEP). */
 export function selectDocs(question: string, fullBundle: string, history: readonly QueryTurn[] = []): SelectResult {
+  fullBundle = sanitizeCredentials(fullBundle);
   const blocks = fullBundle.split(SEP).filter(Boolean);
   const fullChars = fullBundle.length;
   const query = retrievalQuery(question, history);
   const sources = (bs: string[]) => bs.map(b => ({ title: b.split('\n')[0]!.replace(/^##\s*/, ''), url: /แหล่งอ้างอิง:\s*(https?:\/\/\S+)/.exec(b)?.[1] }));
   const base = { total: blocks.length, fullChars, contextUsed: query !== canonicalQuery(question) };
+  const concepts = queryConcepts(query);
+  // Keep complete policy documents and their explicit references for these
+  // narrow lookups. This also keeps the returned set small on short KB bundles.
+  const focused = concepts.length > 0 && concepts.every(c =>
+    ['uniform', 'overtime', 'meeting_room', 'org_chart'].includes(c)) &&
+    blocks.some(b => queryConcepts(b).some(c => concepts.includes(c)));
 
   // Already small, or an unscoped broad question → use everything.
-  if (fullChars <= BUDGET_CHARS)
+  if (!focused && fullChars <= BUDGET_CHARS)
     return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "full", sources: sources(blocks), ...base };
   if (BROAD.test(question) && queryConcepts(query).length === 0)
     return { bundle: fullBundle, selected: blocks.length, chars: fullChars, mode: "broad", sources: sources(blocks), ...base };
 
   const qg = ngrams(query);
-  const concepts = queryConcepts(query);
+  const terms=[...new Set(query.match(/[a-z][a-z0-9_.-]{2,}/gi)??[])].filter(t=>!['the','for','with','how','what','and','can','you'].includes(t.toLowerCase()));
+  // A prior citation is a locator only. Re-read the actual document from the
+  // current bundle and require the same topic before giving it priority.
+  const preceding = history.at(-1);
+  const priorUrls = new Set(base.contextUsed && preceding?.role === 'assistant'
+    ? preceding.content.match(/https?:\/\/[^\s)\]>]+/g) : []);
   const scored = blocks.map((b, i) => {
     const titleLine = b.split("\n", 1)[0] || "";
     // Explicit topic in a title outranks generic shared words such as สวัสดิการ.
     const topicHits = queryConcepts(titleLine).filter(c => concepts.includes(c)).length;
     const bodyHits = queryConcepts(b).filter(c => concepts.includes(c)).length;
-    const score = 1000 * topicHits + 100 * bodyHits + overlap(qg, ngrams(b)) + TITLE_WEIGHT * overlap(qg, ngrams(titleLine));
+    const technicalHits=terms.filter(t=>canonicalQuery(b).includes(t.toLowerCase())).length;
+    const source = /แหล่งอ้างอิง:\s*(https?:\/\/\S+)/.exec(b)?.[1];
+    const verifiedPrior = bodyHits && source && priorUrls.has(source) ? 2000 : 0;
+    const score = verifiedPrior + 1000 * topicHits + 200 * technicalHits + 100 * bodyHits + overlap(qg, ngrams(b)) + TITLE_WEIGHT * overlap(qg, ngrams(titleLine));
     return { b, i, score, bodyHits, topicHits };
   });
 
@@ -88,6 +104,7 @@ export function selectDocs(question: string, fullBundle: string, history: readon
   const picked: typeof scored = [];
   let chars = 0;
   for (const s of scored) {
+    if (focused && !s.bodyHits) continue;
     if (BROAD.test(question) && concepts.length && !s.bodyHits && !s.topicHits) continue;
     if (picked.length >= MIN_DOCS && chars + s.b.length > BUDGET_CHARS) continue;
     picked.push(s);
@@ -96,8 +113,11 @@ export function selectDocs(question: string, fullBundle: string, history: readon
   // Follow explicit references, preserving entire documents and their exceptions.
   const initial = picked.length;
   const seen = new Set(picked.map(p => p.i));
+  const hasTitleMatch=picked.some(p=>p.topicHits>0);
   for (let depth = 0; depth < 2; depth++) {
-    const bodies = picked.map(p => p.b.split('\n').slice(2).join('\n')).join('\n');
+    // An index/contents page mentions every chapter. Follow references from
+    // topic-matched documents when present so that index cannot pull all KB in.
+    const bodies = picked.filter(p=>!hasTitleMatch||p.topicHits>0).map(p => p.b.split('\n').slice(2).join('\n')).join('\n');
     const chapters = new Set([...bodies.matchAll(/(?:หมวด|บท)(?:ที่)?\s*(\d+)/g)].map(m => m[1]));
     const additions = scored.filter(s => !seen.has(s.i) && (
       [...s.b.split('\n')[0]!.matchAll(/(?:หมวด|บท)(?:ที่)?\s*(\d+)/g)].some(m => chapters.has(m[1])) ||

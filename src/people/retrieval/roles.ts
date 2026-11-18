@@ -33,7 +33,7 @@ const ROLE_ALIASES: Record<CanonicalRole, string[]> = {
   DEVELOPER: ["software engineer", "developer", "programmer", "นักพัฒนา", "โปรแกรมเมอร์"],
   DESIGNER: ["ux/ui", "ui/ux", "designer", "นักออกแบบ", "ออกแบบ"],
   ACCOUNTANT: ["accountant", "accounting", "เจ้าหน้าที่บัญชี", "บัญชี"],
-  SALES: ["sales", "พนักงานขาย", "ฝ่ายขาย"],
+  SALES: ["sales", "sale", "เซลส์", "เซลล์", "พนักงานขาย", "ฝ่ายขาย"],
   MARKETING: ["marketing", "การตลาด"],
   HUMAN_RESOURCES: ["human resources", "hr", "ทรัพยากรบุคคล"],
 };
@@ -45,7 +45,7 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 /** Short ASCII aliases ("qa", "hr") need word boundaries so they can't fire inside
  *  an unrelated word; longer/Thai forms are matched as plain substrings. */
 function aliasIn(haystack: string, alias: string): boolean {
-  if (alias.length <= 3 && /^[a-z0-9]+$/.test(alias)) {
+  if ((alias.length <= 3 || alias === 'sale') && /^[a-z0-9]+$/.test(alias)) {
     return new RegExp(`(^|[^a-z0-9])${escapeRe(alias)}([^a-z0-9]|$)`).test(haystack);
   }
   return haystack.includes(alias);

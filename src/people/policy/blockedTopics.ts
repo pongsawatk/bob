@@ -11,6 +11,7 @@ export interface BlockedCategory {
 
 /** Ordered; first match wins (only the code differs — all → REFUSE). */
 export const BLOCKED_CATEGORIES: readonly BlockedCategory[] = [
+  { code: "personal_age", re: /อายุ\s*(?:เท่าไหร่|เท่าไร|กี่ปี|กี่ขวบ)|\bhow old\b/ },
   { code: "salary", re: /เงินเดือน|ค่าจ้าง|รายได้|โบนัส|ปรับเงิน|ฐานเงินเดือน|รหัสเงินเดือน|salary|bonus|compensation|payroll/ },
   { code: "leave", re: /วันลา|ลาป่วย|ลากิจ|ลาพักร้อน|วันหยุดพักร้อน|leave balance|sick leave/ },
   { code: "health", re: /สุขภาพ|ป่วยเป็น|โรคประจำ|ประวัติการรักษา|health record|medical (record|history)/ },

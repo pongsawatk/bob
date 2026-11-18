@@ -98,6 +98,7 @@ export interface SearchResponse {
   clarifyOptions?: string[];
   clarificationKind?: 'person' | 'team';
   countGroups?: Array<{ label: string; count: number | null; reason?: string }>;
+  teamHasNoMatchingRole?: boolean;
 }
 
 /** Token-substring match of a free-text topic/team across Org/Sub Org/Group/
@@ -194,9 +195,13 @@ function page(
  *  unfiltered — silently dropping this constraint is the P0-2 bug. */
 function applyRole(people: readonly Profile[], rawRole: string): { people: Profile[]; canonical: string } {
   const canon = canonicalRole(rawRole);
-  const people2 = canon
+  let people2 = canon
     ? people.filter((p) => roleMatchesPosition(p.position, canon))
     : people.filter((p) => rawRoleMatchesPosition(p.position, rawRole));
+  if (/\bsenior\b|อาวุโส/i.test(rawRole)) {
+    people2 = people2.filter(p => /\bsenior\b|\bsr\.?\b|อาวุโส/i.test(p.position ?? ''));
+    return {people:people2, canonical:rawRole.trim()};
+  }
   return { people: people2, canonical: canon ?? rawRole.trim() };
 }
 
@@ -299,6 +304,7 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       if (ambiguous.length > 1) return empty({ needsClarification: true, clarificationKind: 'person', candidateIds: ambiguous.slice(0,5).map(r => r.profile.email!), clarifyOptions: ambiguous.slice(0, 5).map(r => `${r.profile.displayName} — ${[r.profile.org,r.profile.subOrg].filter(Boolean).join(' / ')}`) });
       return page(ordered, {
         limit: input.limit ?? PC_CONFIG.MAX_RESULTS_FIRST_PAGE,
+        offset: input.offset,
         countOnly,
         filtersApplied: { personRef: ref },
       });
@@ -341,6 +347,10 @@ export function retrieve(input: RetrieveInput): SearchResponse {
           ? Object.values(directory).filter(p => scopeFields.some(f => norm(p[f]) === norm(teamTerm)))
           : Object.values(directory).filter(p => scopeFields.some(f => norm(p[f]).includes(norm(teamTerm))));
       members.sort((a,b) => a.fullNameTh.localeCompare(b.fullNameTh, 'th'));
+      if (!bu && norm(teamTerm) && scopeFields.includes('subOrg') && !members.some(p=>norm(p.org)===norm(teamTerm))) {
+        const orgs=[...new Set(members.map(p=>p.org).filter(Boolean))];
+        if (orgs.length>1) return empty({needsClarification:true,clarifyOptions:orgs.map(org=>`${org} / ${teamTerm}`),filtersApplied:{team:teamTerm}});
+      }
       if (intent.dimension && intent.dimension !== 'primary') filtersApplied.dimension = intent.dimension;
       else if (scopeFields.length===1 && !['org','subOrg'].includes(scopeFields[0]!)) filtersApplied.dimension=scopeFields[0];
       if (norm(teamTerm)) filtersApplied.team = teamTerm;
@@ -352,9 +362,11 @@ export function retrieve(input: RetrieveInput): SearchResponse {
         filtersApplied.bu = bu;
       }
       if (norm(role)) {
+        const teamFound = !!(rawTeam || bu) && members.length > 0;
         const applied = applyRole(members, role);
         members = applied.people;
         filtersApplied.role = applied.canonical;
+        if (teamFound && !members.length) return empty({fallback:true, teamHasNoMatchingRole:true, filtersApplied});
       }
       if (sp.excludeTeam) {
         const excluded = resolveTeamScope(directory, sp.excludeTeam, intent.dimension);
@@ -367,13 +379,27 @@ export function retrieve(input: RetrieveInput): SearchResponse {
       }
 
       if (members.length === 0) return empty({ fallback: true, filtersApplied });
+      if (intent.tenureOrder) {
+        // ISO start dates sort chronologically. Keep missing dates last in both directions.
+        members.sort((a,b) => {
+          if (!a.startDate || !b.startDate) return Number(!a.startDate) - Number(!b.startDate);
+          return intent.tenureOrder === 'longest' ? a.startDate.localeCompare(b.startDate) : b.startDate.localeCompare(a.startDate);
+        });
+      }
       const response = page(members.map((p) => dir(p, "team_member", input)), {
         offset: input.offset,
         limit: input.limit ?? PC_CONFIG.TEAM_ROSTER_MAX,
         countOnly,
         filtersApplied,
       });
-      if (countOnly && intent.countGroups?.length) {
+      if (countOnly && intent.groupBy === 'position') {
+        const positions = new Map<string,number>();
+        for (const p of members) {
+          const label = p.position?.trim() || 'ไม่ระบุตำแหน่ง';
+          positions.set(label,(positions.get(label) ?? 0) + 1);
+        }
+        response.countGroups = Array.from(positions,([label,count]) => ({label,count})).sort((a,b)=>a.label.localeCompare(b.label,'th'));
+      } else if (countOnly && intent.countGroups?.length) {
         const scoped = Object.fromEntries(members.map(p => [p.email, p]));
         response.countGroups = intent.countGroups.map(g => {
           const part = retrieve({ ...input, directory: scoped, teamFieldsOnly: true, intent: { subIntent: 'TEAM_ROSTER', targetType: 'TEAM', confidence: intent.confidence, countOnly: true, searchParams: { team: g.team, role: g.role } } });

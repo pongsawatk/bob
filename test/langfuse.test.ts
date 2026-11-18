@@ -42,17 +42,18 @@ test("Langfuse v5 adapter: root hierarchy, propagated session, generation usage/
         root.update({ input: "hello" });
         const trace = createTraceAdapter(root);
         const child = trace.span("route");
-        child.end({ category: "HR" });
+        child.end({ category: "HR", detail: 'password: SENTINEL_CREDENTIAL_42' });
         trace.generation({
           name: "router",
           model: "test-model",
           version: "v1",
-          input: "hello",
-          output: "HR",
+          input: "hello password: SENTINEL_CREDENTIAL_42",
+          output: "HR password: SENTINEL_CREDENTIAL_42",
+          metadata: { nested: {client_secret:'SENTINEL_CREDENTIAL_42'} },
           latencyMs: 25,
           usage: { input: 10, output: 2, total: 12, totalCost: 0.001 },
         });
-        trace.update({ output: "answer", metadata: { category: "HR" }, tags: ["teams", "HR", "llm"] });
+        trace.update({ output: "answer", metadata: { category: "HR", private_key:'SENTINEL_CREDENTIAL_42' }, tags: ["teams", "HR", "llm"] });
         return trace.traceId;
       }),
   );
@@ -69,6 +70,7 @@ test("Langfuse v5 adapter: root hierarchy, propagated session, generation usage/
   assert.equal(generation.parentSpanContext?.spanId, root.spanContext().spanId);
 
   for (const span of spans) {
+    assert.ok(!JSON.stringify(span.attributes).includes('SENTINEL_CREDENTIAL_42'));
     assert.equal(span.attributes["user.id"], "user-test");
     assert.equal(span.attributes["session.id"], "session-test");
     assert.equal(span.attributes["langfuse.trace.name"], "bob-chat");

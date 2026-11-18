@@ -1,4 +1,5 @@
 import { env } from "../env.js";
+import { sanitizeCredentialData } from '../security/credentials.js';
 import { fetchRetry } from "../http/fetchRetry.js";
 import { acceptsTemperature, type Effort } from './modelConfig.js';
 
@@ -76,7 +77,7 @@ export function buildLLMBody(opts: LLMCallOptions) {
 
 export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
   const { model } = opts;
-  const body = buildLLMBody(opts);
+  const body = sanitizeCredentialData(buildLLMBody(opts));
 
   const t0 = Date.now();
   // 50s per-attempt timeout (normal answers are 5-20s; below Vercel's 60s limit).
@@ -123,7 +124,7 @@ export async function callLLM(opts: LLMCallOptions): Promise<LLMResult> {
   // LLM round-trip by several seconds; reading the body first captures true latency.
   const latencyMs = Date.now() - t0;
 
-  const text = json.choices?.[0]?.message?.content ?? "";
+  const text = sanitizeCredentialData(json.choices?.[0]?.message?.content ?? "");
   // An empty completion used to flow through and reach Teams as a blank card.
   // Fail loudly instead: onTurnError sends a proper apology + fires the alert webhook.
   if (!text.trim()) throw new Error(`OpenRouter returned empty content (model ${model})`);

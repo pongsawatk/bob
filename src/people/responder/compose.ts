@@ -115,6 +115,7 @@ export interface ResponseContext {
   countOnly: boolean;
   requestedFields?: string[];
   countGroups?: Array<{ label: string; count: number | null; reason?: string }>;
+  groupByPosition?: boolean;
   filtersApplied?: { dimension?: string; team?: string; bu?: string; role?: string; topic?: string; personRef?: string };
 }
 
@@ -182,6 +183,7 @@ export function countTemplate(ctx: ResponseContext): string {
   const total = `${what ? `${what} ` : ""}มีทั้งหมด ${ctx.totalMatches} คนครับ`;
   if (!ctx.countGroups?.length) return total;
   const groups = ctx.countGroups.map(g => `- ${g.label}: ${g.count === null ? 'ยังระบุกลุ่มนี้ในทะเบียนไม่ได้ กรุณายืนยันชื่อทีม/ตำแหน่ง' : `${g.count} คน`}`);
+  if (ctx.groupByPosition) return [total, 'จำนวนคนแยกตามตำแหน่ง', ...groups].join('\n');
   return `${total}\n${groups.join('\n')}\n\nนับแต่ละกลุ่มภายในขอบเขตข้างต้น กลุ่มอาจซ้อนทับหรือไม่ครอบคลุมทั้งหมด จึงไม่ใช้ผลบวกแทนยอดรวมครับ`;
 }
 

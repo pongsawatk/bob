@@ -212,8 +212,15 @@ async function handleSinglePeopleQuery(
     };
   };
 
-  if (decision.outcome === "REFUSE") return finish(MSG.refuse, 0, false, { errorStage: "POLICY_REFUSE" });
+  if (decision.reason === 'blocked:personal_age') return finish('BOB ให้ข้อมูลอายุส่วนบุคคลจากทะเบียนไม่ได้ครับ',0,false,{errorStage:'POLICY_REFUSE'});
+  if (decision.outcome === "REFUSE") return finish(decision.reason==='blocked:salary'
+    ? 'ผมไม่เปิดเผยหรือเปรียบเทียบเงินเดือนของผู้อื่นครับ หากต้องการคุยเรื่องค่าตอบแทนของตัวเอง ลองเตรียมผลงาน ขอบเขตความรับผิดชอบ และสิ่งที่อยากขอปรับ เพื่อคุยกับหัวหน้าหรือ HR โดยไม่ต้องใช้เงินเดือนของคนอื่น ผมช่วยเรียบเรียงข้อความได้'
+    : MSG.refuse, 0, false, { errorStage: "POLICY_REFUSE" });
   if (/รหัสพนักงาน|employee\s*(?:id|code)/i.test(query)) return finish('BOB ยังไม่ให้ข้อมูลรหัสพนักงานครับ กรุณาตรวจจากระบบพนักงานหรือติดต่อ HR',0,false,{errorStage:'POLICY_REFUSE'});
+  if (/ลาออก(?:ไป)?(?:แล้ว|หรือยัง|รึยัง|ไหม|มั้ย)|ยัง(?:เป็นพนักงาน|ทำงานอยู่)(?:ไหม|มั้ย)|\b(?:has .+ resigned|still employed)\b/i.test(query))
+    return finish('ทะเบียนที่ BOB ใช้ตอบยืนยันสถานะการจ้างของบุคคลไม่ได้ครับ กรุณาตรวจสอบกับ HR',0,false,{errorStage:'NO_RESULT'});
+  if (intent.subIntent === 'TENURE' && !intent.searchParams.personRef && !isSelf && /^(?:ถาม(?:เรื่อง)?|สอบถาม)?\s*(?:อายุงาน|ทำงานมากี่ปีแล้ว)[\s?]*$/.test(query))
+    return finish('ต้องการทราบอายุงานของคุณเองหรือของใครครับ?',0,false,{errorStage:'NEEDS_CLARIFICATION'});
   if (decision.outcome === "CLARIFY" || decision.outcome === "UNABLE_TO_DETERMINE") {
     // An unparseable question and a genuinely vague one both land here but are
     // different problems: one is a model/prompt failure, the other is the user.
@@ -277,6 +284,17 @@ async function handleSinglePeopleQuery(
       answers.push(`เอกสารระบุ: ${e.quote}\n${e.team?'สมาชิกทีมสำหรับติดต่อ (เอกสารไม่ได้ระบุผู้รับผิดชอบรายบุคคล):':'ช่องทางติดต่อ:'}\n${roster}\nอ้างอิง: ${e.sourceUrl}`);
     }
     if(answers.length)return finish(answers.join('\n\n')+await freshnessNote(deps),new Set(matchedEmails).size);
+    // An explicit team can provide a coordination starting point, never proof
+    // of expertise. Keep suggestions separate from approved ownership tags.
+    const team=intent.searchParams.team??ctx.conversation?.requests[0]?.searchParams.team;
+    if (team && ['EXPERT_FIND','EXPERIENCE_FIND','IDEA_CONNECT','TEAM_DISCOVERY'].includes(intent.subIntent)) {
+      const roster=retrieve({directory,now,intent:{subIntent:'TEAM_ROSTER',searchParams:{team},confidence:1}});
+      const leads=roster.results.filter(r=>/team lead|หัวหน้าทีม/i.test(r.profile.position??''));
+      if (!roster.needsClarification && leads.length) {
+        matchedEmails=leads.flatMap(r=>r.profile.email?[r.profile.email]:[]);
+        return finish(`ยังไม่มีข้อมูลยืนยันความเชี่ยวชาญหรือจัดอันดับคนในเรื่องนี้ครับ ข้อเสนอสำหรับเริ่มประสานงาน: ลองถามหัวหน้าทีม ${team} ให้ช่วยชี้คนที่รับเรื่องได้\n${leads.map(r=>[r.profile.displayName,r.profile.position,r.profile.email].filter(Boolean).join(' — ')).join('\n')}\nนี่เป็นข้อเสนอจากตำแหน่งในทะเบียน ไม่ใช่การยืนยันว่าบุคคลนี้เชี่ยวชาญเรื่องที่ถาม`,leads.length);
+      }
+    }
     return finish('ยังไม่พบข้อมูลที่ยืนยันว่าใครรับผิดชอบหรือมีประสบการณ์ตรงเรื่องนี้ครับ หากทราบชื่อคนหรือทีม ผมช่วยค้นข้อมูลและอีเมลงานจากทะเบียนได้',0,false,{errorStage:'NO_RESULT'});
   }
   stages.retrievalMs = Date.now() - tRetrieval;
@@ -296,7 +314,9 @@ async function handleSinglePeopleQuery(
   // A count question is answered from `totalMatches` with no rows and no LLM call,
   // so an empty `results` here is a real answer rather than a miss.
   if (response.totalMatches === 0) {
+    if (response.teamHasNoMatchingRole) return finish(`พบทีม ${response.filtersApplied.team || response.filtersApplied.bu} แต่ไม่พบสมาชิกที่มีตำแหน่งตรงกับ ${intent.searchParams.role} ในทะเบียนครับ`,0,false,{errorStage:'NO_RESULT'});
     const target=[intent.searchParams.personRef,intent.searchParams.team,intent.searchParams.bu].filter(Boolean).join(' / ');
+    if (!target && /(?:email|อีเมล|เมล).*(?:เขา|ด้วย)?/i.test(query)) return finish('หมายถึงอีเมลของใครหรือทีมไหนครับ? ระบุชื่อเพิ่มได้เลย',0,false,{errorStage:'NEEDS_CLARIFICATION'});
     return finish(target?`ยังไม่พบข้อมูลที่ตรงกับ ${target} ในทะเบียนครับ ลองระบุชื่อเต็มหรือ Org / Sub Org เพิ่มได้`:templateFallback([]), 0, true, { errorStage: "NO_RESULT", retrievalFallback: true });
   }
   if ((ctx.offset??0)>0 && !response.results.length) return finish('แสดงสมาชิกที่ตรงกับเงื่อนไขครบแล้วครับ',response.totalMatches);
@@ -316,6 +336,7 @@ async function handleSinglePeopleQuery(
     truncated: response.truncated,
     countOnly: response.countOnly,
     countGroups: response.countGroups,
+    groupByPosition: intent.groupBy === 'position',
     filtersApplied: response.filtersApplied,
   });
   stages.responderMs = Date.now() - tResponder;
@@ -325,7 +346,8 @@ async function handleSinglePeopleQuery(
   const relation = intent.subIntent==='REPORTING_LINE' ? (intent.supervisorLevel===2?'หัวหน้าที่ดูแลภาพรวม (Supervisor 2)':'หัวหน้าโดยตรง (Supervisor 1)')+'\n' : '';
   const text = relation + base + (await freshnessNote(deps));
   return finish(text, response.totalMatches, composed.usedFallback, {
-    partialGroups: response.countGroups?.some(g => g.count === null),
+    partialGroups: response.countGroups?.some(g => g.count === null) ||
+      response.results.some(r => intent.requestedFields?.some(f => r.profile[f as keyof typeof r.profile] == null || r.profile[f as keyof typeof r.profile] === '')),
     responderFallback: composed.usedFallback,
     // A discarded responder output is an answer we still shipped, but it's the signal
     // that the model is fighting the retrieval result — worth seeing in a trace.

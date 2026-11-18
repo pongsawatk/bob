@@ -4,6 +4,7 @@ import { callLLM, type LLMCallOptions, type LLMResult } from './openrouter.js';
 import { ARMS, MODEL_CONFIG_VERSION, type ExperimentArm } from './modelConfig.js';
 import type { SelectResult } from '../kb/select.js';
 import { requestBudget } from '../http/budget.js';
+import { sanitizeCredentialData } from '../security/credentials.js';
 
 export interface EvaluationSnapshot {
   schema: 1;
@@ -25,6 +26,8 @@ export const sha256 = (s: string) => createHash('sha256').update(s).digest('hex'
 
 /** Captures exactly the assembled prompt, evidence and source clock. */
 export async function callDomainLLM(category: 'HR' | 'IT', options: LLMCallOptions, promptVersion: string, selection: SelectResult): Promise<LLMResult> {
+  options = sanitizeCredentialData(options);
+  selection = sanitizeCredentialData(selection);
   const scope = context.getStore();
   const resolved = scope?.arm ? { ...options, ...ARMS[scope.arm], strictProvider: true, cacheSystem: scope.allowFallback ? options.cacheSystem : false } : options;
   if (scope?.arm && !scope.allowFallback) {

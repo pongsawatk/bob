@@ -1,18 +1,24 @@
 import { callLLM, type LLMResult, type LLMMessage } from "../llm/openrouter.js";
 import { getPrompt } from "../prompts/langfusePrompts.js";
 import { getHRBundle, getProductBundle } from "../kb/index.js";
-import { remainingHolidaysBlock } from "../kb/holidays.js";
+import { calendarAnswer, remainingHolidaysBlock } from "../kb/holidays.js";
 import { selectDocs, type SelectResult } from "../kb/select.js";
 import { env } from "../env.js";
 import type { Category } from "./router.js";
 import { guardEligibility } from '../prompts/systemPolicy.js';
 import { timesheetEditGap } from '../kb/taskEvidence.js';
 import { getITBundle, IT_COLLECTION_ID } from '../kb/it.js';
-import { validateITAnswer, IT_UNAVAILABLE } from '../kb/itAnswer.js';
-import { answerQuery } from '../kb/query.js';
+import { validateITAnswer, IT_UNAVAILABLE, IT_REFUSED, asksForCredential, firstNavigation } from '../kb/itAnswer.js';
+import {policyEvidenceAnswer,guardTrainingUnit,roomAvailabilityAnswer} from '../kb/policyEvidence.js';
+import { answerQuery, queryConcepts, retrievalQuery } from '../kb/query.js';
 import { modelSettings } from '../llm/modelConfig.js';
 import { callDomainLLM } from '../llm/experimentContext.js';
 import { renderPrompt } from '../prompts/render.js';
+import { sanitizeCredentials } from '../security/credentials.js';
+import { guardLeavePay } from '../kb/hrAnswer.js';
+import { generalBoundary, workloadDraftSource, WORKLOAD_DRAFT_SCHEMA, renderWorkloadDraft } from './conversationIntent.js';
+import { asksForGuiltDraft, VOLUNTARY_HELP_DRAFT } from '../security/answerBoundaries.js';
+import { guardAnswerBoundaries, asksToShareOwnToken, OWN_TOKEN_SETUP, asksToBypassAuthentication, AUTHENTICATION_BOUNDARY, asksToReplaceEvidenceRules, EVIDENCE_RULE_BOUNDARY, asksToFabricateIllness, HONEST_LEAVE_DRAFT } from '../security/answerBoundaries.js';
 
 export interface DomainResult extends LLMResult {
   category: Category;
@@ -30,11 +36,10 @@ export interface DomainResult extends LLMResult {
   evidenceGap?: 'timesheet_edit_workflow';
   itCollectionId?: string;
   citationGuarded?: boolean;
+  answerStatus?: 'refused' | 'no_information';
+  leavePayGuarded?: boolean;
+  draftGrounded?: boolean;
 }
-
-const CLARIFY_RESPONSE =
-  "ขออภัยครับ ช่วยอธิบายเพิ่มเติมได้ไหมครับ?\n" +
-  "ผมตอบเรื่อง HR (สวัสดิการ ลา OT เบิกเงิน), Product และ IT (VPN, เครื่องมือ AI, คู่มือใช้งานระบบ) ครับ";
 
 function currentDateTH(): string {
   return new Date().toLocaleDateString("th-TH", {
@@ -51,21 +56,28 @@ export async function callDomainBot(
   profileBlock?: string,
   kbSources: { getHRBundle: typeof getHRBundle; getProductBundle: typeof getProductBundle; getITBundle?: typeof getITBundle } = { getHRBundle, getProductBundle, getITBundle },
 ): Promise<DomainResult> {
+  if (asksForGuiltDraft(message)) return {category,text:VOLUNTARY_HELP_DRAFT,answerStatus:'refused',model:'',promptVersion:'',promptMs:0,kbMs:0,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
+  if (asksToFabricateIllness(message)) return {category,text:HONEST_LEAVE_DRAFT,answerStatus:'refused',model:'',promptVersion:'',promptMs:0,kbMs:0,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
+  if (asksToReplaceEvidenceRules(message)) return {category,text:EVIDENCE_RULE_BOUNDARY,answerStatus:'refused',model:'',promptVersion:'',promptMs:0,kbMs:0,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
+  if (asksToBypassAuthentication(message)) return {category,text:AUTHENTICATION_BOUNDARY,answerStatus:'refused',model:'',promptVersion:'',promptMs:0,kbMs:0,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
+  const boundary=generalBoundary(message,history);
+  if (boundary && (category==='GENERAL'||category==='UNKNOWN')) return {category,text:boundary,model:'',promptVersion:'',promptMs:0,kbMs:0,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
   if (category === "UNKNOWN") {
+    const { text: systemPrompt, version: promptVersion } = await getPrompt('general');
+    const result = await callLLM({ ...modelSettings('GENERAL'), systemPrompt, messages: [...history, {role:'user',content:message}] });
     return {
-      category,
-      model: "",
-      promptVersion: "",
+      ...result, text:guardAnswerBoundaries(result.text), category,
+      model: result.actualModel ?? env.MODEL_GENERAL,
+      promptVersion,
       promptMs: 0,
       kbMs: 0,
-      text: CLARIFY_RESPONSE,
-      latencyMs: 0,
-      costUsd: 0,
-      usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
     };
   }
 
   if (category === "HR") {
+    const calendar = calendarAnswer(message);
+    if (calendar) return { category, text: calendar, model:'', promptVersion:'', promptMs:0, kbMs:0,
+      latencyMs:0, costUsd:0, usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0} };
     const tPrompt = Date.now();
     const { text: template, version: promptVersion } = await getPrompt("hr");
     const promptMs = Date.now() - tPrompt;
@@ -73,6 +85,12 @@ export async function callDomainBot(
     // Trim the bundle to the docs relevant to this question (see kb/select.ts).
     const kbSelect = selectDocs(message, await kbSources.getHRBundle(), history);
     const kbMs = Date.now() - tKb;
+    const availability = roomAvailabilityAnswer(message, kbSelect.bundle);
+    if (availability) return { category, text:availability, answerStatus:'no_information', model:'',
+      promptVersion,promptMs,kbMs,kbSelect,latencyMs:0,costUsd:0,
+      usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0} };
+    const exactPolicy=policyEvidenceAnswer(message,kbSelect.bundle,history);
+    if(exactPolicy) return {category,text:exactPolicy,model:'',promptVersion,promptMs,kbMs,kbSelect,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
     const gap = timesheetEditGap(message, kbSelect.bundle, history);
     if (gap) return { category, text: gap, model: '', promptVersion, promptMs, kbMs, kbSelect,
       evidenceGap: 'timesheet_edit_workflow', latencyMs: 0, costUsd: 0,
@@ -82,17 +100,21 @@ export async function callDomainBot(
     const holidays = remainingHolidaysBlock();
     const dateBlock = holidays ? `${currentDateTH()}\n\n${holidays}` : currentDateTH();
     const systemPrompt = renderPrompt(template, { KB_BUNDLE: kbSelect.bundle, CURRENT_DATE: dateBlock });
+    const policyTopics = queryConcepts(retrievalQuery(message, history));
+    const organizational = policyTopics.length > 0 && policyTopics.every(t =>
+      ['meeting_room', 'org_chart', 'holiday'].includes(t));
 
     const result = await callDomainLLM('HR', {
       ...modelSettings('HR'),
       systemPrompt,
-      messages: [...history, { role: "user", content: message }],
+      messages: [...history, { role: "user", content: answerQuery(message, history) }],
       // Shared KB prefix remains cacheable; per-user facts stay in a separate block.
       cacheSystem: env.MODEL_HR.startsWith("anthropic/"),
-      userContext: profileBlock,
+      userContext: organizational ? undefined : profileBlock,
     }, promptVersion, kbSelect);
-    const guarded = guardEligibility(result.text);
-    return { ...result, text: guarded.text, eligibilityGuarded: guarded.guarded, category, model: result.actualModel ?? result.requestedModel ?? env.MODEL_HR, promptVersion, promptMs, kbMs, kbSelect };
+    const eligibility = guardEligibility(result.text);
+    const pay = guardLeavePay(eligibility.text,message,kbSelect.bundle,history);
+    return { ...result, text: guardAnswerBoundaries(guardTrainingUnit(pay.text,kbSelect.bundle)), eligibilityGuarded: eligibility.guarded, leavePayGuarded:pay.guarded, category, model: result.actualModel ?? result.requestedModel ?? env.MODEL_HR, promptVersion, promptMs, kbMs, kbSelect };
   }
 
   if (category === "PRODUCT") {
@@ -100,7 +122,7 @@ export async function callDomainBot(
     const { text: template, version: promptVersion } = await getPrompt("product");
     const promptMs = Date.now() - tPrompt;
     const tKb = Date.now();
-    const kb = await kbSources.getProductBundle();
+    const kb = sanitizeCredentials(await kbSources.getProductBundle());
     const kbMs = Date.now() - tKb;
     const systemPrompt = renderPrompt(template, { KB_BUNDLE: kb, user_name: userName, department, CURRENT_DATE: currentDateTH() });
 
@@ -115,6 +137,8 @@ export async function callDomainBot(
   }
 
   if (category === 'IT') {
+    if (asksToShareOwnToken(message)) return {category,text:OWN_TOKEN_SETUP,model:'',promptVersion:'',promptMs:0,kbMs:0,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
+    if (asksForCredential(message)) return {category,text:IT_REFUSED,answerStatus:'refused',model:'',promptVersion:'',promptMs:0,kbMs:0,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
     const tKb = Date.now();
     const kb = await (kbSources.getITBundle ?? getITBundle)();
     const kbMs = Date.now() - tKb;
@@ -122,6 +146,8 @@ export async function callDomainBot(
       itCollectionId: IT_COLLECTION_ID, latencyMs: 0, costUsd: 0,
       usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } };
     const kbSelect = selectDocs(message, kb, history);
+    const first=firstNavigation(kbSelect,answerQuery(message,history));
+    if(first) return {category,text:first,model:'',promptVersion:'',promptMs:0,kbMs,kbSelect,itCollectionId:IT_COLLECTION_ID,latencyMs:0,costUsd:0,usage:{inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0}};
     const tPrompt = Date.now();
     const { text: template, version: promptVersion } = await getPrompt('it');
     const promptMs = Date.now() - tPrompt;
@@ -132,23 +158,25 @@ export async function callDomainBot(
       messages: [{ role: 'user', content: answerQuery(message, history) }],
       cacheSystem: env.MODEL_IT.startsWith('anthropic/'),
     }, promptVersion, kbSelect);
-    const checked = validateITAnswer(result.text, kbSelect);
-    return { ...result, text: checked.text, category, model: result.actualModel ?? result.requestedModel ?? env.MODEL_IT, promptVersion, promptMs, kbMs,
-      kbSelect, itCollectionId: IT_COLLECTION_ID, citationGuarded: checked.guarded };
+    const checked = validateITAnswer(result.text, kbSelect, answerQuery(message, history));
+    return { ...result, text: guardAnswerBoundaries(checked.text), category, model: result.actualModel ?? result.requestedModel ?? env.MODEL_IT, promptVersion, promptMs, kbMs,
+      kbSelect, itCollectionId: IT_COLLECTION_ID, citationGuarded: checked.guarded, answerStatus:checked.status };
   }
 
   // GENERAL
   const tPrompt = Date.now();
   const { text: template, version: promptVersion } = await getPrompt("general");
   const promptMs = Date.now() - tPrompt;
-  const systemPrompt = template.replace("{{user_message}}", "").trimEnd();
+  const draft=workloadDraftSource(message,history);
+  const systemPrompt = draft ? WORKLOAD_DRAFT_SCHEMA : template.replace("{{user_message}}", "").trimEnd();
   // GENERAL gets the profile too — "คุณรู้จักผมไหม" routes here, and identity
   // questions answered with "ไม่รู้จักคุณ" undercut the whole feature.
   const result = await callLLM({
     ...modelSettings('GENERAL'),
     systemPrompt,
-    messages: [...history, { role: "user", content: message }],
+    messages: draft ? [{role:'user',content:JSON.stringify({DRAFT_SOURCE:draft})}] : [...history, { role: "user", content: message }],
     userContext: profileBlock,
   });
-  return { ...result, category, model: env.MODEL_GENERAL, promptVersion, promptMs, kbMs: 0 };
+  const grounded=draft ? renderWorkloadDraft(result.text,draft,message) : undefined;
+  return { ...result, text:guardAnswerBoundaries(grounded?.text??result.text), draftGrounded:grounded?.valid, category, model: result.actualModel??env.MODEL_GENERAL, promptVersion, promptMs, kbMs: 0 };
 }

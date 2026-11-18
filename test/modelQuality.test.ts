@@ -28,6 +28,18 @@ test('LLM records actual model/provider/finish reason and unknown billing', asyn
   assert.equal(r.costUsd, null); assert.equal(r.actualModel, 'actual'); assert.equal(r.finishReason, 'length');
   assert.equal(r.usage.reasoningTokens, 17); assert.equal(r.effectiveEffort, 'unknown');
 });
+
+test('LLM wire payload and structured response exclude credential sentinels', async t => {
+  t.mock.method(globalThis, 'fetch', async (_url, opts) => {
+    const body=String(opts?.body);
+    assert.ok(!body.includes('SENTINEL_CREDENTIAL_42'));
+    assert.match(body,/Install Netbird/);
+    return Response.json({choices:[{message:{content:JSON.stringify({answer:'password: SENTINEL_CREDENTIAL_42',sourceUrls:['https://kb.test/vpn']})}}]});
+  });
+  const r=await callLLM({model:'test',systemPrompt:'| Password | SENTINEL_CREDENTIAL_42 |\nInstall Netbird',userContext:'client_secret: SENTINEL_CREDENTIAL_42',messages:[{role:'user',content:'password: SENTINEL_CREDENTIAL_42'}]});
+  assert.ok(!r.text.includes('SENTINEL_CREDENTIAL_42'));
+  assert.deepEqual(JSON.parse(r.text).sourceUrls,['https://kb.test/vpn']);
+});
 test('experiment capture freezes the exact prompt and independent request scopes', async t => {
   t.mock.method(globalThis, 'fetch', async (_url, opts) => { const body = JSON.parse(String(opts?.body)); return Response.json({ model: body.model, choices: [{ finish_reason: 'stop', message: { content: 'ok' } }], usage: { cost: .01 } }); });
   const scopes: import('../src/llm/experimentContext.js').ModelExperimentContext[] = [{ arm: 'haiku55-low' }, { arm: 'sonnet55-medium' }];
